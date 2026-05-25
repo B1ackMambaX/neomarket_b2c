@@ -1,5 +1,8 @@
 .env
 .env.local
+
+# macOS
+.DS_Store
 __pycache__/
 *.pyc
 *.pyo
@@ -11,3 +14,10 @@ build/
 *.egg-info/
 .venv/
 venv/
+
+# AI
+CLAUDE.md
+graphify-out
+AGENTS.md
+.claude
+docs

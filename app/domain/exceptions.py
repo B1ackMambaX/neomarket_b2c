@@ -12,3 +12,7 @@ class ValidationException(DomainException):
 
 class PermissionDeniedException(DomainException):
     code = "PERMISSION_DENIED"
+
+
+class UpstreamServiceUnavailableException(DomainException):
+    code = "UPSTREAM_SERVICE_UNAVAILABLE"
