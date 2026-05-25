@@ -55,3 +55,18 @@ class PaginatedCatalogProducts(BaseModel):
     total_count: int
     limit: int
     offset: int
+
+
+class FacetValue(BaseModel):
+    value: str
+    count: int
+
+
+class Facet(BaseModel):
+    name: str
+    values: list[FacetValue]
+
+
+class FacetsResponse(BaseModel):
+    category_id: str | None = None
+    facets: list[Facet]

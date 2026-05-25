@@ -1,3 +1,5 @@
+import hashlib
+import time
 from typing import Any
 
 import httpx
@@ -6,10 +8,21 @@ from app.domain.exceptions import NotFoundException, UpstreamServiceUnavailableE
 from app.schemas.catalog import (
     CatalogProductCard,
     CategoryRef,
+    Facet,
+    FacetValue,
+    FacetsResponse,
     ImageRef,
     PaginatedCatalogProducts,
     SellerRef,
 )
+
+_FACETS_TTL = 60.0
+_facets_cache: dict[str, tuple[float, FacetsResponse]] = {}
+
+
+def _make_facets_cache_key(category_id: str | None, filters: dict[str, Any]) -> str:
+    raw = f"{category_id or ''}|{'&'.join(f'{k}={v}' for k, v in sorted(filters.items()))}"
+    return hashlib.sha1(raw.encode()).hexdigest()
 
 B2C_ALLOWED_SORTS = ("price_asc", "price_desc", "popularity", "new")
 B2B_SORT_MAP = {
@@ -55,6 +68,41 @@ class CatalogService:
             limit=payload.get("limit", limit),
             offset=payload.get("offset", offset),
         )
+
+    async def get_facets(
+        self,
+        *,
+        category_id: str | None,
+        filters: dict[str, Any],
+    ) -> FacetsResponse:
+        cache_key = _make_facets_cache_key(category_id, filters)
+        cached = _facets_cache.get(cache_key)
+        if cached and time.monotonic() - cached[0] < _FACETS_TTL:
+            return cached[1]
+
+        try:
+            payload = await self._b2b_client.get_facets(
+                category_id=category_id, filters=filters
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise NotFoundException("Category not found") from exc
+            raise UpstreamServiceUnavailableException("Catalog upstream failed") from exc
+        except httpx.HTTPError as exc:
+            raise UpstreamServiceUnavailableException("Catalog upstream unavailable") from exc
+
+        result = FacetsResponse(
+            category_id=payload.get("category_id"),
+            facets=[
+                Facet(
+                    name=f["name"],
+                    values=[FacetValue(value=v["value"], count=v["count"]) for v in f["values"]],
+                )
+                for f in payload.get("facets", [])
+            ],
+        )
+        _facets_cache[cache_key] = (time.monotonic(), result)
+        return result
 
     def _build_b2b_params(
         self,

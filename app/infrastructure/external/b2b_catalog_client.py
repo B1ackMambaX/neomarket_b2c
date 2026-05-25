@@ -25,3 +25,23 @@ class B2BCatalogClient:
             response = await client.get("/api/v1/public/products", params=params)
             response.raise_for_status()
             return response.json()
+
+    async def get_facets(
+        self,
+        *,
+        category_id: str | None,
+        filters: dict[str, Any],
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if category_id:
+            params["category_id"] = category_id
+        for name, value in filters.items():
+            params[f"filters[{name}]"] = value
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers=self._headers,
+            timeout=self._timeout,
+        ) as client:
+            response = await client.get("/api/v1/public/facets", params=params)
+            response.raise_for_status()
+            return response.json()

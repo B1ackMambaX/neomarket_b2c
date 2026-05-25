@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.api.v1.dependencies.catalog import get_b2b_catalog_client
-from app.schemas.catalog import PaginatedCatalogProducts
+from app.schemas.catalog import FacetsResponse, PaginatedCatalogProducts
 from app.services.catalog_service import B2C_ALLOWED_SORTS, CatalogService
 
 router = APIRouter(prefix="/catalog", tags=["Catalog"])
@@ -41,6 +41,22 @@ async def list_catalog_products(
         sort=sort,
         filters=_parse_filter_query(request),
     )
+
+
+@router.get(
+    "/facets",
+    response_model=FacetsResponse,
+    summary="Фасеты (фильтры) для каталога",
+)
+async def get_catalog_facets(
+    request: Request,
+    category_id: str | None = Query(default=None),
+    b2b_client: Any = Depends(get_b2b_catalog_client),
+) -> FacetsResponse:
+    service = CatalogService(b2b_client)
+    filters = _parse_filter_query(request)
+    filters.pop("category_id", None)  # category_id is a dedicated param, not a filter
+    return await service.get_facets(category_id=category_id, filters=filters)
 
 
 _ATTR_PREFIX = "filter[attributes]["

@@ -4,23 +4,40 @@ from httpx import ASGITransport, AsyncClient, Request, Response
 
 from app.api.v1.dependencies.catalog import get_b2b_catalog_client
 from app.main import app
+from app.services import catalog_service
 
 
 class StubB2BCatalogClient:
     def __init__(
         self,
         payload: dict | None = None,
+        facets_payload: dict | None = None,
         error: Exception | None = None,
     ) -> None:
         self.payload = payload or {}
+        self.facets_payload = facets_payload or {}
         self.error = error
         self.calls: list[dict] = []
+        self.facets_calls: list[dict] = []
 
     async def list_public_products(self, params: dict) -> dict:
         self.calls.append(params)
         if self.error:
             raise self.error
         return self.payload
+
+    async def get_facets(self, *, category_id: str | None, filters: dict) -> dict:
+        self.facets_calls.append({"category_id": category_id, "filters": filters})
+        if self.error:
+            raise self.error
+        return self.facets_payload
+
+
+@pytest.fixture(autouse=True)
+def clear_facets_cache():
+    catalog_service._facets_cache.clear()
+    yield
+    catalog_service._facets_cache.clear()
 
 
 @pytest.fixture
@@ -136,3 +153,50 @@ async def test_b2b_category_not_found_returns_404(client: AsyncClient):
 
     assert response.status_code == 404
     assert response.json() == {"code": "NOT_FOUND", "message": "Category not found"}
+
+
+@pytest.mark.asyncio
+async def test_facets_return_counts_per_filter_value(client: AsyncClient):
+    b2b = StubB2BCatalogClient(
+        facets_payload={
+            "category_id": "123e4567-e89b-12d3-a456-426614174001",
+            "facets": [
+                {
+                    "name": "brand",
+                    "values": [
+                        {"value": "Apple", "count": 124},
+                        {"value": "Samsung", "count": 98},
+                    ],
+                },
+                {
+                    "name": "color",
+                    "values": [
+                        {"value": "черный", "count": 60},
+                        {"value": "белый", "count": 45},
+                    ],
+                },
+            ],
+        }
+    )
+    app.dependency_overrides[get_b2b_catalog_client] = lambda: b2b
+
+    response = await client.get(
+        "/api/v1/catalog/facets",
+        params={
+            "category_id": "123e4567-e89b-12d3-a456-426614174001",
+            "filter[attributes][brand]": "Apple",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["category_id"] == "123e4567-e89b-12d3-a456-426614174001"
+    assert len(body["facets"]) == 2
+    brand_facet = next(f for f in body["facets"] if f["name"] == "brand")
+    assert brand_facet["values"][0] == {"value": "Apple", "count": 124}
+    assert b2b.facets_calls == [
+        {
+            "category_id": "123e4567-e89b-12d3-a456-426614174001",
+            "filters": {"brand": "Apple"},
+        }
+    ]
