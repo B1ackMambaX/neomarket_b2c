@@ -26,6 +26,16 @@ class B2BCatalogClient:
             response.raise_for_status()
             return response.json()
 
+    async def get_public_product(self, product_id: str) -> dict[str, Any]:
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers=self._headers,
+            timeout=self._timeout,
+        ) as client:
+            response = await client.get(f"/api/v1/public/products/{product_id}")
+            response.raise_for_status()
+            return response.json()
+
     async def get_facets(
         self,
         *,

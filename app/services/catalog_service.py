@@ -7,6 +7,8 @@ import httpx
 from app.domain.exceptions import NotFoundException, UpstreamServiceUnavailableException
 from app.schemas.catalog import (
     CatalogProductCard,
+    CatalogProductDetail,
+    CatalogSku,
     CategoryRef,
     Facet,
     FacetValue,
@@ -21,7 +23,10 @@ _facets_cache: dict[str, tuple[float, FacetsResponse]] = {}
 
 
 def _make_facets_cache_key(category_id: str | None, filters: dict[str, Any]) -> str:
-    raw = f"{category_id or ''}|{'&'.join(f'{k}={v}' for k, v in sorted(filters.items()))}"
+    raw = (
+        f"{category_id or ''}|"
+        f"{'&'.join(f'{k}={v}' for k, v in sorted(filters.items()))}"
+    )
     return hashlib.sha1(raw.encode()).hexdigest()
 
 B2C_ALLOWED_SORTS = ("price_asc", "price_desc", "popularity", "new")
@@ -69,6 +74,18 @@ class CatalogService:
             offset=payload.get("offset", offset),
         )
 
+    async def get_product(self, product_id: str) -> CatalogProductDetail:
+        try:
+            payload = await self._b2b_client.get_public_product(product_id)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise NotFoundException("Product not found") from exc
+            raise UpstreamServiceUnavailableException("Catalog upstream failed") from exc
+        except httpx.HTTPError as exc:
+            raise UpstreamServiceUnavailableException("Catalog upstream unavailable") from exc
+
+        return self._map_product_detail(payload)
+
     async def get_facets(
         self,
         *,
@@ -96,7 +113,10 @@ class CatalogService:
             facets=[
                 Facet(
                     name=f["name"],
-                    values=[FacetValue(value=v["value"], count=v["count"]) for v in f["values"]],
+                    values=[
+                        FacetValue(value=v["value"], count=v["count"])
+                        for v in f["values"]
+                    ],
                 )
                 for f in payload.get("facets", [])
             ],
@@ -181,3 +201,122 @@ class CatalogService:
             is_in_cart=item.get("is_in_cart", False),
             seller=seller,
         )
+
+    def _map_product_detail(self, item: dict[str, Any]) -> CatalogProductDetail:
+        skus = [self._map_sku(sku) for sku in item.get("skus", [])]
+        images = self._map_images(item.get("images", []), entity_id=item["id"])
+        characteristics = item.get("characteristics", [])
+        attributes = self._characteristics_to_attributes(characteristics)
+
+        category = None
+        if item.get("category_id") or item.get("category"):
+            category_payload = item.get("category") or {}
+            category = CategoryRef(
+                id=item.get("category_id") or category_payload.get("id"),
+                name=category_payload.get("name"),
+                parent_id=category_payload.get("parent_id"),
+                level=category_payload.get("level"),
+                path=category_payload.get("path", []),
+            )
+
+        seller = None
+        if item.get("seller_id") or item.get("seller"):
+            seller_payload = item.get("seller") or {}
+            seller = SellerRef(
+                id=item.get("seller_id") or seller_payload.get("id"),
+                display_name=seller_payload.get("display_name"),
+            )
+
+        min_price = item.get("min_price")
+        if min_price is None:
+            min_price = self._min_current_price(skus)
+        has_stock = item.get("has_stock")
+        if has_stock is None:
+            has_stock = any(sku.available_quantity > 0 for sku in skus)
+
+        old_price = item.get("old_price")
+        if old_price is None:
+            discounted_skus = [sku.price for sku in skus if sku.discount > 0]
+            old_price = min(discounted_skus) if discounted_skus else None
+
+        title = item.get("title") or item.get("name", "")
+        cover_image = item.get("cover_image") or (images[0].url if images else None)
+
+        return CatalogProductDetail(
+            id=item["id"],
+            name=title,
+            slug=item.get("slug"),
+            category=category,
+            min_price=min_price,
+            old_price=old_price,
+            has_stock=has_stock,
+            rating=item.get("rating"),
+            reviews_count=item.get("reviews_count", 0),
+            images=images,
+            image=cover_image,
+            is_in_cart=item.get("is_in_cart", False),
+            seller=seller,
+            description=item.get("description", ""),
+            attributes=item.get("attributes") or attributes,
+            skus=skus,
+            status=item.get("status"),
+            characteristics=characteristics,
+        )
+
+    def _map_sku(self, item: dict[str, Any]) -> CatalogSku:
+        active_quantity = item.get("available_quantity", item.get("active_quantity", 0))
+        discount = item.get("discount", 0) or 0
+        images = self._map_images(item.get("images", []), entity_id=item["id"])
+        characteristics = item.get("characteristics", [])
+
+        return CatalogSku(
+            id=item["id"],
+            name=item.get("name"),
+            sku_code=item.get("sku_code") or item.get("article"),
+            price=item.get("price", 0),
+            old_price=item.get("old_price")
+            or (item.get("price") if discount > 0 else None),
+            available_quantity=active_quantity,
+            attributes=item.get("attributes")
+            or self._characteristics_to_attributes(characteristics),
+            images=images,
+            discount=discount,
+            image=item.get("image") or (images[0].url if images else None),
+            characteristics=characteristics,
+        )
+
+    def _map_images(
+        self, images: list[dict[str, Any]], *, entity_id: str
+    ) -> list[ImageRef]:
+        result = []
+        for index, image in enumerate(images):
+            result.append(
+                ImageRef(
+                    id=image.get("id") or f"{entity_id}:image:{index}",
+                    url=image["url"],
+                    alt=image.get("alt"),
+                    ordering=image.get("ordering", index),
+                    is_main=image.get("is_main", index == 0),
+                )
+            )
+        return result
+
+    def _characteristics_to_attributes(
+        self, characteristics: list[dict[str, Any]]
+    ) -> dict[str, object]:
+        return {
+            characteristic["name"]: characteristic.get("value")
+            for characteristic in characteristics
+            if characteristic.get("name")
+        }
+
+    def _min_current_price(self, skus: list[CatalogSku]) -> int:
+        available_prices = [
+            max(sku.price - sku.discount, 0)
+            for sku in skus
+            if sku.available_quantity > 0
+        ]
+        if available_prices:
+            return min(available_prices)
+        all_prices = [max(sku.price - sku.discount, 0) for sku in skus]
+        return min(all_prices) if all_prices else 0

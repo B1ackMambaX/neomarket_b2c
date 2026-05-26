@@ -50,6 +50,42 @@ class CatalogProductCard(BaseModel):
         return self
 
 
+class CatalogSku(BaseModel):
+    id: str
+    name: str | None = None
+    sku_code: str | None = None
+    price: int
+    old_price: int | None = None
+    available_quantity: int = 0
+    attributes: dict[str, object] = Field(default_factory=dict)
+    images: list[ImageRef] = Field(default_factory=list)
+
+    # Extra buyer-safe fields from the canonical flow and B2B public endpoint.
+    discount: int = 0
+    image: str | None = None
+    active_quantity: int = 0
+    in_stock: bool = False
+    characteristics: list[dict[str, object]] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _sync_flow_aliases(self) -> "CatalogSku":
+        self.active_quantity = self.available_quantity
+        self.in_stock = self.available_quantity > 0
+        if self.images and self.image is None:
+            self.image = self.images[0].url
+        return self
+
+
+class CatalogProductDetail(CatalogProductCard):
+    description: str
+    attributes: dict[str, object] = Field(default_factory=dict)
+    skus: list[CatalogSku] = Field(default_factory=list)
+
+    # Extra buyer-safe fields from the canonical flow.
+    status: str | None = None
+    characteristics: list[dict[str, object]] = Field(default_factory=list)
+
+
 class PaginatedCatalogProducts(BaseModel):
     items: list[CatalogProductCard]
     total_count: int
