@@ -4,7 +4,11 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.api.v1.dependencies.catalog import get_b2b_catalog_client
-from app.schemas.catalog import FacetsResponse, PaginatedCatalogProducts
+from app.schemas.catalog import (
+    CatalogProductDetail,
+    FacetsResponse,
+    PaginatedCatalogProducts,
+)
 from app.services.catalog_service import B2C_ALLOWED_SORTS, CatalogService
 
 router = APIRouter(prefix="/catalog", tags=["Catalog"])
@@ -41,6 +45,19 @@ async def list_catalog_products(
         sort=sort,
         filters=_parse_filter_query(request),
     )
+
+
+@router.get(
+    "/products/{product_id}",
+    response_model=CatalogProductDetail,
+    summary="Карточка товара (публичная)",
+)
+async def get_catalog_product(
+    product_id: str,
+    b2b_client: Any = Depends(get_b2b_catalog_client),
+) -> CatalogProductDetail:
+    service = CatalogService(b2b_client)
+    return await service.get_product(product_id)
 
 
 @router.get(
