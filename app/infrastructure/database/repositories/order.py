@@ -22,6 +22,25 @@ class SQLAlchemyOrderRepository:
             return None
         return self._map_order(order)
 
+    async def get_by_id_for_buyer(
+        self,
+        order_id: str,
+        buyer_id: str,
+        *,
+        for_update: bool = False,
+    ) -> StoredOrder | None:
+        stmt = (
+            select(OrderModel)
+            .options(selectinload(OrderModel.items))
+            .where(OrderModel.id == order_id, OrderModel.buyer_id == buyer_id)
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        order = await self._session.scalar(stmt)
+        if order is None:
+            return None
+        return self._map_order(order)
+
     async def create_or_get_by_idempotency_key(
         self,
         order: StoredOrder,
@@ -71,6 +90,24 @@ class SQLAlchemyOrderRepository:
             return existing, False
         await self._session.refresh(model, attribute_names=["items"])
         return self._map_order(model), True
+
+    async def save(self, order: StoredOrder) -> StoredOrder:
+        model = await self._session.get(
+            OrderModel,
+            order.id,
+            options=[selectinload(OrderModel.items)],
+        )
+        if model is None:
+            raise ValueError(f"Order {order.id} not found")
+
+        model.status = order.status
+        model.cancel_reason = order.cancel_reason
+        model.status_history = order.status_history
+        model.paid_at = order.paid_at
+        model.delivered_at = order.delivered_at
+        await self._session.flush()
+        await self._session.refresh(model, attribute_names=["items"])
+        return self._map_order(model)
 
     async def delete(self, order_id: str) -> None:
         await self._session.execute(delete(OrderModel).where(OrderModel.id == order_id))

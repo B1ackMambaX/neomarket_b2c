@@ -1,5 +1,12 @@
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TypedDict
+
+
+class StatusHistoryEntry(TypedDict):
+    status: str
+    changed_at: str
+    reason: str | None
 
 
 @dataclass(frozen=True)
@@ -40,7 +47,7 @@ class StoredOrder:
     payment_method_id: str
     comment: str | None = None
     cancel_reason: str | None = None
-    status_history: list[dict[str, str | None]] = field(default_factory=list)
+    status_history: list[StatusHistoryEntry] = field(default_factory=list)
     created_at: datetime | None = None
     paid_at: datetime | None = None
     delivered_at: datetime | None = None

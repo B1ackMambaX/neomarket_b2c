@@ -19,6 +19,10 @@ class OrderCreateRequest(BaseModel):
     items_snapshot: list[OrderItemSnapshot] | None = None
 
 
+class OrderCancelRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class OrderItem(BaseModel):
     sku_id: str
     product_id: str

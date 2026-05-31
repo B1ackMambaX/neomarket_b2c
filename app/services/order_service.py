@@ -1,23 +1,30 @@
 import asyncio
 import hashlib
 import json
+import logging
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 
 from app.domain.entities.cart import CartIdentity
-from app.domain.entities.order import OrderLineInput, StoredOrder, StoredOrderItem
+from app.domain.entities.order import OrderLineInput, StatusHistoryEntry, StoredOrder, StoredOrderItem
 from app.domain.exceptions import (
     B2BUnavailableException,
+    CancelNotAllowedException,
     IdempotencyConflictException,
     InvalidRequestException,
+    NotFoundException,
     ReserveFailedException,
 )
+from app.domain.repositories.b2b_catalog import B2BCatalogClientProtocol
 from app.domain.repositories.cart import CartRepository
 from app.domain.repositories.order import OrderRepository
-from app.schemas.order import OrderCreateRequest, OrderResponse
+from app.schemas.order import OrderCancelRequest, OrderCreateRequest, OrderResponse
+
+logger = logging.getLogger(__name__)
 
 
 class OrderService:
@@ -25,7 +32,7 @@ class OrderService:
         self,
         order_repository: OrderRepository,
         cart_repository: CartRepository,
-        b2b_client: Any,
+        b2b_client: B2BCatalogClientProtocol,
     ) -> None:
         self._orders = order_repository
         self._cart = cart_repository
@@ -85,11 +92,11 @@ class OrderService:
             payment_method_id=request.payment_method_id,
             comment=request.comment,
             status_history=[
-                {
-                    "status": "PAID",
-                    "changed_at": now.isoformat(),
-                    "reason": "mock payment",
-                }
+                StatusHistoryEntry(
+                    status="PAID",
+                    changed_at=now.isoformat(),
+                    reason="mock payment",
+                )
             ],
             created_at=now,
             paid_at=now,
@@ -109,6 +116,77 @@ class OrderService:
             raise
 
         return OrderResponse.from_entity(created)
+
+    async def cancel_order(
+        self,
+        *,
+        buyer_id: str,
+        order_id: str,
+        request: OrderCancelRequest | None = None,
+    ) -> OrderResponse:
+        order = await self._orders.get_by_id_for_buyer(order_id, buyer_id, for_update=True)
+        if order is None:
+            raise NotFoundException("Order not found")
+
+        if order.status not in {"CREATED", "PAID"}:
+            raise CancelNotAllowedException(order.status)
+
+        reason = request.reason if request is not None else None
+        pending_order = self._with_status(
+            order,
+            status="CANCEL_PENDING",
+            reason=reason,
+        )
+        saved_pending = await self._orders.save(pending_order)
+
+        try:
+            await self._unreserve(saved_pending)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code < 500:
+                raise
+            logger.exception(
+                "Failed to unreserve order %s (HTTP %s); marked cancel pending",
+                order.id,
+                exc.response.status_code,
+            )
+            return OrderResponse.from_entity(saved_pending)
+        except httpx.TransportError:
+            logger.exception(
+                "Failed to unreserve order %s; marked cancel pending",
+                order.id,
+            )
+            return OrderResponse.from_entity(saved_pending)
+
+        cancelled_order = self._with_status(
+            saved_pending,
+            status="CANCELLED",
+            reason=reason,
+        )
+        saved = await self._orders.save(cancelled_order)
+        return OrderResponse.from_entity(saved)
+
+    def _with_status(
+        self,
+        order: StoredOrder,
+        *,
+        status: str,
+        reason: str | None,
+    ) -> StoredOrder:
+        now = datetime.now(timezone.utc)
+        status_history = [
+            *order.status_history,
+            StatusHistoryEntry(
+                status=status,
+                changed_at=now.isoformat(),
+                reason=reason,
+            ),
+        ]
+        return replace(
+            order,
+            status=status,
+            cancel_reason=reason,
+            status_history=status_history,
+        )
 
     async def _resolve_lines(
         self,
@@ -188,6 +266,15 @@ class OrderService:
             raise B2BUnavailableException(
                 "Product service is temporarily unavailable"
             ) from exc
+
+    async def _unreserve(self, order: StoredOrder) -> None:
+        await self._b2b_client.unreserve_inventory(
+            order_id=order.id,
+            items=[
+                {"sku_id": item.sku_id, "quantity": item.quantity}
+                for item in order.items
+            ],
+        )
 
     def _validate_lines(
         self,
