@@ -35,6 +35,16 @@ class ReserveFailedException(DomainException):
         self.failed_items = failed_items or []
 
 
+class CancelNotAllowedException(DomainException):
+    code = "CANCEL_NOT_ALLOWED"
+
+    def __init__(self, current_status: str) -> None:
+        super().__init__(
+            f"Order cancellation is not allowed in status {current_status}"
+        )
+        self.current_status = current_status
+
+
 class MissingCartIdentityException(DomainException):
     code = "MISSING_CART_IDENTITY"
 

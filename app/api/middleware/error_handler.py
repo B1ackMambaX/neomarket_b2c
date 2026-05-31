@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 
 from app.domain.exceptions import (
     B2BUnavailableException,
+    CancelNotAllowedException,
     DomainException,
     ConflictException,
     IdempotencyConflictException,
@@ -17,6 +18,7 @@ from app.domain.exceptions import (
 )
 
 _STATUS_MAP = {
+    CancelNotAllowedException: 409,
     ConflictException: 409,
     IdempotencyConflictException: 409,
     InvalidRequestException: 400,
@@ -48,6 +50,8 @@ async def domain_exception_handler(
     content = {"code": exc.code, "message": str(exc)}
     if isinstance(exc, ReserveFailedException):
         content["failed_items"] = exc.failed_items
+    if isinstance(exc, CancelNotAllowedException):
+        content["current_status"] = exc.current_status
     return JSONResponse(
         status_code=status_code,
         content=content,
