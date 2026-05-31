@@ -4,9 +4,21 @@ from typing import Any
 import httpx
 
 from app.domain.entities.cart import CartIdentity
-from app.domain.exceptions import UpstreamServiceUnavailableException
+from app.domain.exceptions import (
+    ConflictException,
+    NotFoundException,
+    UpstreamServiceUnavailableException,
+    UnauthorizedException,
+)
 from app.domain.repositories.cart import CartRepository
-from app.schemas.cart import CartItem, CartResponse
+from app.schemas.cart import (
+    CartItem,
+    CartItemAddRequest,
+    CartItemQuantityUpdateRequest,
+    CartResponse,
+    CartValidationIssue,
+    CartValidationResponse,
+)
 from app.schemas.catalog import ImageRef
 
 
@@ -66,6 +78,130 @@ class CartService:
             is_valid=is_valid,
             updated_at=updated_at,
         )
+
+    async def add_item(
+        self,
+        identity: CartIdentity,
+        request: CartItemAddRequest,
+    ) -> CartResponse:
+        sku = await self._load_sku_for_add(request.sku_id)
+        product = await self._load_product_for_add(sku.get("product_id"))
+        existing = await self._repository.get_item(identity, request.sku_id)
+        requested_total = request.quantity + (existing.quantity if existing else 0)
+
+        if self._unavailable_reason(sku=sku, product=product) is not None:
+            raise NotFoundException("SKU not found or product unavailable")
+        if requested_total > int(sku.get("active_quantity") or 0):
+            raise ConflictException("Insufficient stock")
+
+        await self._repository.add_item(
+            identity=identity,
+            sku_id=request.sku_id,
+            quantity=request.quantity,
+        )
+        return await self.get_cart(identity)
+
+    async def update_item_quantity(
+        self,
+        identity: CartIdentity,
+        sku_id: str,
+        request: CartItemQuantityUpdateRequest,
+    ) -> CartResponse:
+        existing = await self._repository.get_item(identity, sku_id)
+        if existing is None:
+            raise NotFoundException("Cart item not found")
+
+        sku = await self._load_sku_for_add(sku_id)
+        product = await self._load_product_for_add(sku.get("product_id"))
+        if self._unavailable_reason(sku=sku, product=product) is not None:
+            raise NotFoundException("SKU not found or product unavailable")
+        if request.quantity > int(sku.get("active_quantity") or 0):
+            raise ConflictException("Insufficient stock")
+
+        await self._repository.update_item_quantity(
+            identity=identity,
+            sku_id=sku_id,
+            quantity=request.quantity,
+        )
+        return await self.get_cart(identity)
+
+    async def delete_item(self, identity: CartIdentity, sku_id: str) -> CartResponse:
+        existing = await self._repository.get_item(identity, sku_id)
+        if existing is None:
+            raise NotFoundException("Cart item not found")
+
+        await self._repository.delete_item(identity, sku_id)
+        return await self.get_cart(identity)
+
+    async def clear(self, identity: CartIdentity) -> None:
+        await self._repository.clear(identity)
+
+    async def validate(self, identity: CartIdentity) -> CartValidationResponse:
+        cart = await self.get_cart(identity)
+        issues: list[CartValidationIssue] = []
+
+        for item in cart.items:
+            if not item.is_available:
+                issues.append(
+                    CartValidationIssue(
+                        sku_id=item.sku_id,
+                        type=self._validation_issue_type(item.unavailable_reason),
+                        message=self._validation_message(item),
+                        old_value=item.quantity,
+                        new_value=item.available_quantity,
+                    )
+                )
+                continue
+
+            if item.quantity > item.available_quantity:
+                issues.append(
+                    CartValidationIssue(
+                        sku_id=item.sku_id,
+                        type="QUANTITY_REDUCED",
+                        message="Requested quantity exceeds available stock",
+                        old_value=item.quantity,
+                        new_value=item.available_quantity,
+                    )
+                )
+
+        return CartValidationResponse(
+            is_valid=not issues,
+            cart=cart,
+            issues=issues,
+        )
+
+    async def merge_guest_cart(
+        self,
+        identity: CartIdentity,
+        guest_session_id: str,
+    ) -> CartResponse:
+        if not identity.is_authenticated:
+            raise UnauthorizedException("Authentication required")
+
+        await self._repository.merge_guest_cart(identity, guest_session_id)
+        return await self.get_cart(identity)
+
+    async def _load_sku_for_add(self, sku_id: str) -> dict[str, Any]:
+        try:
+            return await self._b2b_client.get_public_sku(sku_id)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise NotFoundException("SKU not found or product unavailable") from exc
+            raise UpstreamServiceUnavailableException(
+                "Catalog upstream failed"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise UpstreamServiceUnavailableException(
+                "Catalog upstream unavailable"
+            ) from exc
+
+    async def _load_product_for_add(
+        self,
+        product_id: str | None,
+    ) -> dict[str, Any] | None:
+        if not product_id:
+            return None
+        return (await self._load_products([product_id])).get(product_id)
 
     async def _load_skus(self, sku_ids: list[str]) -> dict[str, dict[str, Any] | None]:
         result: dict[str, dict[str, Any] | None] = {}
@@ -152,6 +288,24 @@ class CartService:
         if status in {"CREATED", "ON_MODERATION"}:
             return "ON_MODERATION"
         return None
+
+    def _validation_issue_type(self, reason: str | None) -> str:
+        if reason == "OUT_OF_STOCK":
+            return "OUT_OF_STOCK"
+        if reason == "PRODUCT_BLOCKED":
+            return "PRODUCT_BLOCKED"
+        if reason in {"PRODUCT_DELETED", "PRODUCT_DELISTED", "ON_MODERATION"}:
+            return "PRODUCT_DELETED"
+        return "PRODUCT_DELETED"
+
+    def _validation_message(self, item: CartItem) -> str:
+        if item.unavailable_reason == "OUT_OF_STOCK":
+            return "SKU is out of stock"
+        if item.unavailable_reason == "PRODUCT_BLOCKED":
+            return "Product is blocked"
+        if item.unavailable_reason == "ON_MODERATION":
+            return "Product is temporarily unavailable"
+        return "Product is unavailable"
 
     def _display_name(
         self,

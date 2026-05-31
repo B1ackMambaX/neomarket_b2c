@@ -10,6 +10,10 @@ class CartItemAddRequest(BaseModel):
     quantity: int = Field(ge=1)
 
 
+class CartItemQuantityUpdateRequest(BaseModel):
+    quantity: int = Field(ge=1)
+
+
 class CartItem(BaseModel):
     sku_id: str
     product_id: str
@@ -34,3 +38,17 @@ class CartResponse(BaseModel):
     subtotal: int
     is_valid: bool
     updated_at: datetime | None = None
+
+
+class CartValidationIssue(BaseModel):
+    sku_id: str
+    type: str
+    message: str
+    old_value: str | int | None = None
+    new_value: str | int | None = None
+
+
+class CartValidationResponse(BaseModel):
+    is_valid: bool
+    cart: CartResponse
+    issues: list[CartValidationIssue]
