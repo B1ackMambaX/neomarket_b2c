@@ -82,6 +82,13 @@ class FakeCartRepository:
         self.identities.append(identity)
         self.items = []
 
+    async def merge_guest_cart(
+        self,
+        user_identity: CartIdentity,
+        guest_session_id: str,
+    ) -> None:
+        raise NotImplementedError
+
 
 class StubB2BCartClient:
     def __init__(

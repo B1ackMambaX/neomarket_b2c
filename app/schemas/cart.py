@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -42,7 +43,13 @@ class CartResponse(BaseModel):
 
 class CartValidationIssue(BaseModel):
     sku_id: str
-    type: str
+    type: Literal[
+        "PRICE_CHANGED",
+        "OUT_OF_STOCK",
+        "QUANTITY_REDUCED",
+        "PRODUCT_BLOCKED",
+        "PRODUCT_DELETED",
+    ]
     message: str
     old_value: str | int | None = None
     new_value: str | int | None = None

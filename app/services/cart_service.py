@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
@@ -204,14 +205,12 @@ class CartService:
         return (await self._load_products([product_id])).get(product_id)
 
     async def _load_skus(self, sku_ids: list[str]) -> dict[str, dict[str, Any] | None]:
-        result: dict[str, dict[str, Any] | None] = {}
-        for sku_id in sku_ids:
+        async def _fetch_one(sku_id: str) -> tuple[str, dict[str, Any] | None]:
             try:
-                result[sku_id] = await self._b2b_client.get_public_sku(sku_id)
+                return sku_id, await self._b2b_client.get_public_sku(sku_id)
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 404:
-                    result[sku_id] = None
-                    continue
+                    return sku_id, None
                 raise UpstreamServiceUnavailableException(
                     "Catalog upstream failed"
                 ) from exc
@@ -219,7 +218,9 @@ class CartService:
                 raise UpstreamServiceUnavailableException(
                     "Catalog upstream unavailable"
                 ) from exc
-        return result
+
+        pairs = await asyncio.gather(*[_fetch_one(s) for s in sku_ids])
+        return dict(pairs)
 
     async def _load_products(self, product_ids: list[str]) -> dict[str, dict[str, Any]]:
         if not product_ids:
