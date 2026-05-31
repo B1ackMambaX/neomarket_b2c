@@ -10,6 +10,14 @@ class ValidationException(DomainException):
     code = "VALIDATION_ERROR"
 
 
+class MissingCartIdentityException(DomainException):
+    code = "MISSING_CART_IDENTITY"
+
+
+class UnauthorizedException(DomainException):
+    code = "UNAUTHORIZED"
+
+
 class PermissionDeniedException(DomainException):
     code = "PERMISSION_DENIED"
 

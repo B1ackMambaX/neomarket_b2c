@@ -3,14 +3,18 @@ from fastapi.responses import JSONResponse
 
 from app.domain.exceptions import (
     DomainException,
+    MissingCartIdentityException,
     NotFoundException,
     PermissionDeniedException,
+    UnauthorizedException,
     UpstreamServiceUnavailableException,
 )
 
 _STATUS_MAP = {
+    MissingCartIdentityException: 400,
     NotFoundException: 404,
     PermissionDeniedException: 403,
+    UnauthorizedException: 401,
     UpstreamServiceUnavailableException: 502,
 }
 
