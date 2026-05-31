@@ -59,6 +59,29 @@ class B2BCatalogClient:
             response.raise_for_status()
             return response.json()
 
+    async def reserve_inventory(
+        self,
+        *,
+        idempotency_key: str,
+        order_id: str,
+        items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers=self._headers,
+            timeout=self._timeout,
+        ) as client:
+            response = await client.post(
+                "/api/v1/inventory/reserve",
+                json={
+                    "idempotency_key": idempotency_key,
+                    "order_id": order_id,
+                    "items": items,
+                },
+            )
+            response.raise_for_status()
+            return response.json()
+
     async def get_facets(
         self,
         *,
