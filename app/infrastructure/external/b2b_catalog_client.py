@@ -36,6 +36,21 @@ class B2BCatalogClient:
             response.raise_for_status()
             return response.json()
 
+    async def get_public_similar_products(
+        self, product_id: str, *, limit: int
+    ) -> list[dict[str, Any]]:
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers=self._headers,
+            timeout=self._timeout,
+        ) as client:
+            response = await client.get(
+                f"/api/v1/public/products/{product_id}/similar",
+                params={"limit": limit},
+            )
+            response.raise_for_status()
+            return response.json()
+
     async def batch_public_products(self, product_ids: list[str]) -> list[dict[str, Any]]:
         async with httpx.AsyncClient(
             base_url=self._base_url,
