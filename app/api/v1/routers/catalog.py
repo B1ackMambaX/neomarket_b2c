@@ -1,10 +1,12 @@
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.api.v1.dependencies.catalog import get_b2b_catalog_client
 from app.schemas.catalog import (
+    CatalogProductCard,
     CatalogProductDetail,
     FacetsResponse,
     PaginatedCatalogProducts,
@@ -58,6 +60,20 @@ async def get_catalog_product(
 ) -> CatalogProductDetail:
     service = CatalogService(b2b_client)
     return await service.get_product(product_id)
+
+
+@router.get(
+    "/products/{product_id}/similar",
+    response_model=list[CatalogProductCard],
+    summary="Похожие товары",
+)
+async def get_similar_products(
+    product_id: UUID,
+    limit: int = Query(default=10, ge=1, le=50),
+    b2b_client: Any = Depends(get_b2b_catalog_client),
+) -> list[CatalogProductCard]:
+    service = CatalogService(b2b_client)
+    return await service.get_similar_products(product_id=str(product_id), limit=limit)
 
 
 @router.get(

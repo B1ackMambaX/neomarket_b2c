@@ -12,15 +12,18 @@ class StubB2BCatalogClient:
         self,
         payload: dict | None = None,
         product_payload: dict | None = None,
+        similar_payload: list[dict] | dict | None = None,
         facets_payload: dict | None = None,
         error: Exception | None = None,
     ) -> None:
         self.payload = payload or {}
         self.product_payload = product_payload or {}
+        self.similar_payload = similar_payload if similar_payload is not None else []
         self.facets_payload = facets_payload or {}
         self.error = error
         self.calls: list[dict] = []
         self.product_calls: list[str] = []
+        self.similar_calls: list[dict] = []
         self.facets_calls: list[dict] = []
 
     async def list_public_products(self, params: dict) -> dict:
@@ -34,6 +37,12 @@ class StubB2BCatalogClient:
         if self.error:
             raise self.error
         return self.product_payload
+
+    async def get_public_similar_products(self, product_id: str, *, limit: int):
+        self.similar_calls.append({"product_id": product_id, "limit": limit})
+        if self.error:
+            raise self.error
+        return self.similar_payload
 
     async def get_facets(self, *, category_id: str | None, filters: dict) -> dict:
         self.facets_calls.append({"category_id": category_id, "filters": filters})
@@ -244,6 +253,98 @@ async def test_blocked_product_returns_404(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_similar_returns_up_to_8_from_same_category(client: AsyncClient):
+    product_id = "770e8400-e29b-41d4-a716-446655440002"
+    category_id = "123e4567-e89b-12d3-a456-426614174001"
+    similar_items = [
+        _similar_product_payload(
+            product_id,
+            title="Current product",
+            category_id=category_id,
+            index=0,
+        ),
+        *[
+            _similar_product_payload(
+                f"770e8400-e29b-41d4-a716-4466554400{i:02d}",
+                title=f"Similar phone {i}",
+                category_id=category_id,
+                index=i,
+            )
+            for i in range(10, 20)
+        ],
+    ]
+    b2b = StubB2BCatalogClient(similar_payload=similar_items)
+    app.dependency_overrides[get_b2b_catalog_client] = lambda: b2b
+
+    response = await client.get(
+        f"/api/v1/catalog/products/{product_id}/similar",
+        params={"limit": "8"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    item_ids = [item["id"] for item in body]
+    assert len(body) == 8
+    assert product_id not in item_ids
+    assert all(item["category"]["id"] == category_id for item in body)
+    assert "cost_price" not in body[0]
+    assert "reserved_quantity" not in body[0]
+    assert b2b.similar_calls == [{"product_id": product_id, "limit": 8}]
+
+
+@pytest.mark.asyncio
+async def test_empty_category_returns_200_empty_list(client: AsyncClient):
+    product_id = "770e8400-e29b-41d4-a716-446655440002"
+    b2b = StubB2BCatalogClient(similar_payload=[])
+    app.dependency_overrides[get_b2b_catalog_client] = lambda: b2b
+
+    response = await client.get(f"/api/v1/catalog/products/{product_id}/similar")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_product_returns_404(client: AsyncClient):
+    product_id = "770e8400-e29b-41d4-a716-446655440099"
+    request = Request(
+        "GET",
+        f"http://b2b/api/v1/public/products/{product_id}/similar",
+    )
+    upstream_response = Response(status_code=404, request=request)
+    b2b = StubB2BCatalogClient(
+        error=httpx.HTTPStatusError(
+            "not found",
+            request=request,
+            response=upstream_response,
+        )
+    )
+    app.dependency_overrides[get_b2b_catalog_client] = lambda: b2b
+
+    response = await client.get(f"/api/v1/catalog/products/{product_id}/similar")
+
+    assert response.status_code == 404
+    assert response.json() == {"code": "NOT_FOUND", "message": "Product not found"}
+
+
+@pytest.mark.asyncio
+async def test_similar_invalid_product_id_returns_validation_error(
+    client: AsyncClient,
+):
+    b2b = StubB2BCatalogClient()
+    app.dependency_overrides[get_b2b_catalog_client] = lambda: b2b
+
+    response = await client.get("/api/v1/catalog/products/not-a-uuid/similar")
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "VALIDATION_ERROR"
+    assert body["message"] == "Invalid request"
+    assert "detail" not in body
+    assert b2b.similar_calls == []
+
+
+@pytest.mark.asyncio
 async def test_facets_return_counts_per_filter_value(client: AsyncClient):
     b2b = StubB2BCatalogClient(
         facets_payload={
@@ -343,4 +444,24 @@ def _product_card_payload(product_id: str) -> dict:
                 "characteristics": [{"name": "Цвет", "value": "Белый"}],
             },
         ],
+    }
+
+
+def _similar_product_payload(
+    product_id: str,
+    *,
+    title: str,
+    category_id: str,
+    index: int,
+) -> dict:
+    return {
+        "id": product_id,
+        "title": title,
+        "slug": title.lower().replace(" ", "-"),
+        "category_id": category_id,
+        "min_price": 5000000 + index,
+        "cover_image": f"https://cdn.neomarket.ru/images/similar-{index}.jpg",
+        "has_stock": True,
+        "cost_price": 4000000,
+        "reserved_quantity": 2,
     }

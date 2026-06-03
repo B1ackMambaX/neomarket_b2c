@@ -4,7 +4,11 @@ from typing import Any
 
 import httpx
 
-from app.domain.exceptions import NotFoundException, UpstreamServiceUnavailableException
+from app.domain.exceptions import (
+    InvalidRequestException,
+    NotFoundException,
+    UpstreamServiceUnavailableException,
+)
 from app.schemas.catalog import (
     CatalogProductCard,
     CatalogProductDetail,
@@ -85,6 +89,41 @@ class CatalogService:
             raise UpstreamServiceUnavailableException("Catalog upstream unavailable") from exc
 
         return self._map_product_detail(payload)
+
+    async def get_similar_products(
+        self,
+        *,
+        product_id: str,
+        limit: int,
+    ) -> list[CatalogProductCard]:
+        try:
+            payload = await self._b2b_client.get_public_similar_products(
+                product_id,
+                limit=limit,
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise NotFoundException("Product not found") from exc
+            if exc.response.status_code < 500:
+                raise InvalidRequestException(
+                    "Invalid similar products request"
+                ) from exc
+            raise UpstreamServiceUnavailableException(
+                "Catalog upstream failed"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise UpstreamServiceUnavailableException(
+                "Catalog upstream unavailable"
+            ) from exc
+
+        raw_items = payload.get("items", []) if isinstance(payload, dict) else payload
+        filtered_items = [
+            item for item in raw_items if item.get("id") != product_id
+        ]
+        return [
+            self._map_product(item)
+            for item in filtered_items[:limit]
+        ]
 
     async def get_facets(
         self,
