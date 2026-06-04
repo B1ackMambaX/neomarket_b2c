@@ -1,6 +1,7 @@
 import hashlib
 import time
 from typing import Any
+from collections import defaultdict
 
 import httpx
 
@@ -20,6 +21,12 @@ from app.schemas.catalog import (
     ImageRef,
     PaginatedCatalogProducts,
     SellerRef,
+)
+from app.domain.exceptions import (
+    InvalidRequestException,
+    NotFoundException,
+    UpstreamServiceUnavailableException,
+    ValidationException,
 )
 
 _FACETS_TTL = 60.0
@@ -124,6 +131,190 @@ class CatalogService:
             self._map_product(item)
             for item in filtered_items[:limit]
         ]
+
+    async def get_categories_tree(self) -> dict:
+
+        try:
+            categories = await self._b2b_client.get_categories()
+
+        except httpx.HTTPError as exc:
+            raise UpstreamServiceUnavailableException(
+                "Catalog upstream unavailable"
+            ) from exc
+
+        nodes = {}
+        children = defaultdict(list)
+        roots = []
+
+        for item in categories:
+
+            nodes[item["id"]] = {
+                "id": item["id"],
+                "name": item["name"],
+                "parent_id": item["parent_id"],
+                "children": [],
+            }
+
+        for item in categories:
+
+            parent = item["parent_id"]
+
+            if parent is None:
+                roots.append(
+                    nodes[item["id"]]
+                )
+
+            else:
+
+                if parent not in nodes:
+                    raise ValidationException(
+                        "category hierarchy is broken"
+                    )
+
+                children[parent].append(
+                    nodes[item["id"]]
+                )
+
+        for parent_id, child_list in children.items():
+            nodes[parent_id]["children"] = child_list
+
+        return {
+            "items": roots
+        }
+
+    async def get_category(
+        self,
+        category_id: str,
+        *,
+        include_product_count: bool = False,
+    ):
+
+        try:
+
+            return await self._b2b_client.get_category(
+            category_id,
+            include_product_count=include_product_count,
+            )
+
+        except httpx.HTTPStatusError as exc:
+
+            if exc.response.status_code == 404:
+
+                raise NotFoundException(
+                    "Category not found"
+                ) from exc
+
+            raise UpstreamServiceUnavailableException(
+                "Catalog upstream failed"
+            ) from exc
+
+        except httpx.HTTPError as exc:
+
+            raise UpstreamServiceUnavailableException(
+                "Catalog upstream unavailable"
+            ) from exc
+
+    async def get_breadcrumbs(
+        self,
+        *,
+        category_id: str | None,
+        product_id: str | None,
+    ):
+
+        if bool(category_id) == bool(product_id):
+
+        raise InvalidRequestException(
+            "only one of category_id or product_id must be provided"
+        )
+
+        try:
+
+            categories = (
+                await self._b2b_client.get_categories()
+            )
+
+        except httpx.HTTPError as exc:
+
+            raise UpstreamServiceUnavailableException(
+                "Catalog upstream unavailable"
+            ) from exc
+
+        mapping = {
+            c["id"]: c
+            for c in categories
+        }
+
+        if category_id:
+
+            current = mapping.get(
+            category_id
+            )
+
+        else:
+
+            current = (
+                await self._b2b_client
+                .get_category_by_product(
+                    product_id
+                )
+            )
+
+        if not current:
+
+            raise NotFoundException(
+                "Category not found"
+            )
+
+        path = []
+
+        while current:
+
+            path.append(current)
+
+            parent = current["parent_id"]
+
+            if not parent:
+                break
+
+            if parent not in mapping:
+
+                raise ValidationException(
+                    "category hierarchy is broken"
+                )
+
+            current = mapping[parent]
+
+        path.reverse()
+
+        return {
+            "data": [
+                {
+                    "id": c["id"],
+                    "slug": c["slug"],
+                    "name": c["name"],
+                    "url": (
+                        "/catalog/"
+                        + "/".join(
+                            x["slug"]
+                            for x in path[: i + 1]
+                        )
+                    ),
+                    "level": i,
+                    "is_current": (
+                        i == len(path) - 1
+                    ),
+                }
+                for i, c in enumerate(path)
+            ],
+            "meta": {
+                "resolved_via": (
+                    "category_id"
+                    if category_id
+                    else "product_id"
+                ),
+                "category_id": path[-1]["id"],
+            },
+        }
 
     async def get_facets(
         self,
