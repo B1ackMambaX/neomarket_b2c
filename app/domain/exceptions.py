@@ -75,3 +75,14 @@ class CategoryHierarchyBrokenException(ValidationException):
 
 class BreadcrumbParamsException(InvalidRequestException):
     code = "AMBIGUOUS_PARAM"
+
+class ProductNotFoundException(DomainException):
+    code = "PRODUCT_NOT_FOUND"
+
+
+class SubscriptionAlreadyExistsException(DomainException):
+    code = "SUBSCRIPTION_ALREADY_EXISTS"
+
+
+class InvalidNotifyOnException(DomainException):
+    code = "INVALID_NOTIFY_ON"

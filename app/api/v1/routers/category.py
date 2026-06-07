@@ -30,6 +30,7 @@ router = APIRouter(
     response_model=CategoryTreeResponse,
     summary="Get category tree",
 )
+
 async def get_categories(
     b2b_client: Any = Depends(
         get_b2b_catalog_client
