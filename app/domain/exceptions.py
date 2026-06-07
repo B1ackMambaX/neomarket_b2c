@@ -65,6 +65,17 @@ class B2BUnavailableException(DomainException):
     code = "B2B_UNAVAILABLE"
 
 
+class CategoryNotFoundException(NotFoundException):
+    pass
+
+
+class CategoryHierarchyBrokenException(ValidationException):
+    code = "ORPHAN_NODE"
+
+
+class BreadcrumbParamsException(InvalidRequestException):
+    code = "AMBIGUOUS_PARAM"
+
 class ProductNotFoundException(DomainException):
     code = "PRODUCT_NOT_FOUND"
 
