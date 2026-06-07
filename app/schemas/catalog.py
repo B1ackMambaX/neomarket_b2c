@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -48,6 +50,27 @@ class CatalogProductCard(BaseModel):
         self.price = self.min_price
         self.in_stock = self.has_stock
         return self
+
+
+class CollectionProductCard(BaseModel):
+    id: UUID
+    name: str
+    slug: str | None = None
+    category: CategoryRef | None = None
+    min_price: int
+    old_price: int | None = None
+    has_stock: bool
+    rating: float | None = None
+    reviews_count: int = 0
+    images: list[ImageRef]
+    seller: SellerRef | None = None
+
+
+class CatalogCollection(BaseModel):
+    id: UUID
+    name: str
+    description: str | None = None
+    products: list[CollectionProductCard]
 
 
 class CatalogSku(BaseModel):

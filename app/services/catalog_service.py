@@ -388,10 +388,19 @@ class CatalogService:
         return params
 
     def _map_product(self, item: dict[str, Any]) -> CatalogProductCard:
-        min_price = item.get("min_price", item.get("price", 0))
-        image_url = item.get("cover_image") or item.get("image")
-        images = []
-        if image_url:
+        skus = [self._map_sku(sku) for sku in item.get("skus", [])]
+        raw_images = item.get("images", [])
+        images = (
+            self._map_images(raw_images, entity_id=item["id"])
+            if raw_images
+            else []
+        )
+        image_url = (
+            item.get("cover_image")
+            or item.get("image")
+            or (images[0].url if images else None)
+        )
+        if image_url and not images:
             images.append(
                 ImageRef(
                     id=item.get("cover_image_id") or f"{item.get('id')}:cover",
@@ -401,9 +410,22 @@ class CatalogService:
                 )
             )
 
+        min_price = item.get("min_price")
+        if min_price is None:
+            min_price = item.get("price")
+        if min_price is None:
+            min_price = self._min_current_price(skus)
+
         category = None
-        if item.get("category_id"):
-            category = CategoryRef(id=item["category_id"])
+        if item.get("category_id") or item.get("category"):
+            category_payload = item.get("category") or {}
+            category = CategoryRef(
+                id=item.get("category_id") or category_payload.get("id"),
+                name=category_payload.get("name"),
+                parent_id=category_payload.get("parent_id"),
+                level=category_payload.get("level"),
+                path=category_payload.get("path", []),
+            )
 
         seller = None
         if item.get("seller_id") or item.get("seller"):
@@ -413,7 +435,19 @@ class CatalogService:
                 display_name=seller_payload.get("display_name"),
             )
 
-        has_stock = item.get("has_stock", item.get("in_stock", True))
+        has_stock = item.get("has_stock")
+        if has_stock is None:
+            has_stock = item.get("in_stock")
+        if has_stock is None:
+            has_stock = (
+                any(sku.available_quantity > 0 for sku in skus) if skus else True
+            )
+
+        old_price = item.get("old_price")
+        if old_price is None:
+            discounted_skus = [sku.price for sku in skus if sku.discount > 0]
+            old_price = min(discounted_skus) if discounted_skus else None
+
         title = item.get("title") or item.get("name", "")
 
         return CatalogProductCard(
@@ -422,7 +456,7 @@ class CatalogService:
             slug=item.get("slug"),
             category=category,
             min_price=min_price,
-            old_price=item.get("old_price"),
+            old_price=old_price,
             has_stock=has_stock,
             rating=item.get("rating"),
             reviews_count=item.get("reviews_count", 0),
