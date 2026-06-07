@@ -4,16 +4,35 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
-from app.api.v1.dependencies.catalog import get_b2b_catalog_client
+from app.api.v1.dependencies.catalog import (
+    get_b2b_catalog_client,
+    get_collections_repository,
+)
 from app.schemas.catalog import (
+    CatalogCollection,
     CatalogProductCard,
     CatalogProductDetail,
     FacetsResponse,
     PaginatedCatalogProducts,
 )
 from app.services.catalog_service import B2C_ALLOWED_SORTS, CatalogService
+from app.services.collection_service import CollectionService
 
 router = APIRouter(prefix="/catalog", tags=["Catalog"])
+
+
+@router.get(
+    "/collections",
+    response_model=list[CatalogCollection],
+    response_model_exclude_none=True,
+    summary="Подборки товаров",
+)
+async def list_catalog_collections(
+    repository: Any = Depends(get_collections_repository),
+    b2b_client: Any = Depends(get_b2b_catalog_client),
+) -> list[CatalogCollection]:
+    service = CollectionService(repository, b2b_client)
+    return await service.list_collections()
 
 
 @router.get(
