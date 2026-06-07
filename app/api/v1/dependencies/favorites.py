@@ -8,7 +8,12 @@ from app.api.v1.dependencies.cart import resolve_cart_identity
 from app.core.dependencies import get_db
 from app.domain.entities.cart import CartIdentity
 from app.domain.exceptions import UnauthorizedException
-from app.infrastructure.database.repositories.favorite import SQLAlchemyFavoriteRepository
+from app.infrastructure.database.repositories.favorite import (
+    SQLAlchemyFavoriteRepository,
+)
+from app.infrastructure.database.repositories.subscription import (
+    SQLAlchemyProductSubscriptionRepository,
+)
 
 
 async def resolve_favorites_identity(
@@ -35,3 +40,9 @@ async def get_favorites_repository(
     session: AsyncSession = Depends(get_db),
 ) -> SQLAlchemyFavoriteRepository:
     return SQLAlchemyFavoriteRepository(session)
+
+
+async def get_product_subscriptions_repository(
+    session: AsyncSession = Depends(get_db),
+) -> SQLAlchemyProductSubscriptionRepository:
+    return SQLAlchemyProductSubscriptionRepository(session)
