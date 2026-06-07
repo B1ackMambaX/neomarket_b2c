@@ -15,10 +15,36 @@ from app.schemas.favorite import FavoriteMutationResponse, FavoritesResponse
 from app.services.catalog_service import CatalogService
 
 
+class FavoriteProductResolver:
+    def __init__(self, b2b_client: Any) -> None:
+        self._b2b_client = b2b_client
+
+    async def load(
+        self,
+        product_ids: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        if not product_ids:
+            return {}
+        try:
+            payload = await self._b2b_client.batch_public_products(product_ids)
+        except httpx.HTTPError as exc:
+            raise B2BUnavailableException("B2B unavailable") from exc
+
+        raw_items = (
+            payload.get("items", payload) if isinstance(payload, dict) else payload
+        )
+        return {
+            item["id"]: item
+            for item in raw_items
+            if item.get("id") and item.get("status") == "MODERATED"
+        }
+
+
 class FavoriteService:
     def __init__(self, repository: FavoriteRepository, b2b_client: Any) -> None:
         self._repository = repository
         self._b2b_client = b2b_client
+        self._product_resolver = FavoriteProductResolver(b2b_client)
 
     async def list_favorites(
         self,
@@ -34,7 +60,7 @@ class FavoriteService:
             offset=offset,
         )
         product_ids = [favorite.product_id for favorite in favorites]
-        products = await self._load_products(product_ids)
+        products = await self._product_resolver.load(product_ids)
 
         items = [
             self._map_product(products[favorite.product_id])
@@ -54,7 +80,7 @@ class FavoriteService:
         product_id: str,
     ) -> tuple[FavoriteMutationResponse, bool]:
         user_id = self._require_user_id(identity)
-        products = await self._load_products([product_id])
+        products = await self._product_resolver.load([product_id])
         if product_id not in products:
             raise NotFoundException("Product not found")
 
@@ -65,31 +91,8 @@ class FavoriteService:
         user_id = self._require_user_id(identity)
         await self._repository.delete(user_id, product_id)
 
-    async def _load_products(
-        self,
-        product_ids: list[str],
-    ) -> dict[str, dict[str, Any]]:
-        if not product_ids:
-            return {}
-        try:
-            payload = await self._b2b_client.batch_public_products(product_ids)
-        except httpx.HTTPError as exc:
-            raise B2BUnavailableException("B2B unavailable") from exc
-
-        raw_items = (
-            payload.get("items", payload) if isinstance(payload, dict) else payload
-        )
-        return {
-            item["id"]: item
-            for item in raw_items
-            if item.get("id") and self._is_visible_product(item)
-        }
-
     def _map_product(self, product: dict[str, Any]) -> CatalogProductCard:
         return CatalogService(self._b2b_client)._map_product(product)
-
-    def _is_visible_product(self, product: dict[str, Any]) -> bool:
-        return product.get("status") == "MODERATED"
 
     def _require_user_id(self, identity: CartIdentity) -> str:
         if not identity.is_authenticated or identity.user_id is None:

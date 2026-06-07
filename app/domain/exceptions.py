@@ -63,3 +63,15 @@ class UpstreamServiceUnavailableException(DomainException):
 
 class B2BUnavailableException(DomainException):
     code = "B2B_UNAVAILABLE"
+
+
+class ProductNotFoundException(DomainException):
+    code = "PRODUCT_NOT_FOUND"
+
+
+class SubscriptionAlreadyExistsException(DomainException):
+    code = "SUBSCRIPTION_ALREADY_EXISTS"
+
+
+class InvalidNotifyOnException(DomainException):
+    code = "INVALID_NOTIFY_ON"

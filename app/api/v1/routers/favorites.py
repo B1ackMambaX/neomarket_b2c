@@ -1,17 +1,24 @@
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Body, Depends, Query, Response, status
 
 from app.api.v1.dependencies.catalog import get_b2b_catalog_client
 from app.api.v1.dependencies.favorites import (
     get_favorites_repository,
+    get_product_subscriptions_repository,
     resolve_favorites_identity,
 )
 from app.domain.entities.cart import CartIdentity
 from app.domain.repositories.favorite import FavoriteRepository
+from app.domain.repositories.subscription import ProductSubscriptionRepository
 from app.schemas.favorite import FavoriteMutationResponse, FavoritesResponse
+from app.schemas.subscription import (
+    DEFAULT_SUBSCRIPTION_EVENTS,
+    ProductSubscriptionRequest,
+)
 from app.services.favorite_service import FavoriteService
+from app.services.subscription_service import ProductSubscriptionService
 
 router = APIRouter(prefix="/favorites", tags=["Favorites"])
 
@@ -61,4 +68,46 @@ async def delete_favorite(
 ) -> Response:
     service = FavoriteService(repository, b2b_client=None)
     await service.delete_favorite(identity, str(product_id))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{product_id}/subscribe",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    summary="Subscribe to product changes",
+)
+async def subscribe_to_product(
+    product_id: UUID,
+    request: Annotated[ProductSubscriptionRequest | None, Body()] = None,
+    identity: CartIdentity = Depends(resolve_favorites_identity),
+    repository: ProductSubscriptionRepository = Depends(
+        get_product_subscriptions_repository
+    ),
+    b2b_client: Any = Depends(get_b2b_catalog_client),
+) -> Response:
+    service = ProductSubscriptionService(repository, b2b_client)
+    events = (
+        request.events
+        if request is not None
+        else list(DEFAULT_SUBSCRIPTION_EVENTS)
+    )
+    await service.subscribe(identity, str(product_id), events)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete(
+    "/{product_id}/subscribe",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Unsubscribe from product changes",
+)
+async def unsubscribe_from_product(
+    product_id: UUID,
+    identity: CartIdentity = Depends(resolve_favorites_identity),
+    repository: ProductSubscriptionRepository = Depends(
+        get_product_subscriptions_repository
+    ),
+) -> Response:
+    service = ProductSubscriptionService(repository, b2b_client=None)
+    await service.unsubscribe(identity, str(product_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)

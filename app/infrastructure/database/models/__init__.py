@@ -3,5 +3,12 @@
 from app.infrastructure.database.models.cart import CartItemModel
 from app.infrastructure.database.models.favorite import FavoriteModel
 from app.infrastructure.database.models.order import OrderItemModel, OrderModel
+from app.infrastructure.database.models.subscription import ProductSubscriptionModel
 
-__all__ = ["CartItemModel", "FavoriteModel", "OrderItemModel", "OrderModel"]
+__all__ = [
+    "CartItemModel",
+    "FavoriteModel",
+    "OrderItemModel",
+    "OrderModel",
+    "ProductSubscriptionModel",
+]
