@@ -42,3 +42,10 @@ class CartRepository(Protocol):
         guest_session_id: str,
     ) -> None:
         raise NotImplementedError
+
+    async def mark_unavailable_by_sku_ids(
+        self,
+        sku_ids: list[str],
+        unavailable_reason: str,
+    ) -> int:
+        raise NotImplementedError

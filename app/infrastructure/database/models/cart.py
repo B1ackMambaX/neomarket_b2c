@@ -28,3 +28,4 @@ class CartItemModel(TimestampMixin, Base):
     session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     sku_id: Mapped[str] = mapped_column(String(36), nullable=False)
     quantity: Mapped[int] = mapped_column(nullable=False)
+    unavailable_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)

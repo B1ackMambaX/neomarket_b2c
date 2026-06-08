@@ -22,3 +22,4 @@ class StoredCartItem:
     sku_id: str
     quantity: int
     updated_at: datetime | None = None
+    unavailable_reason: str | None = None

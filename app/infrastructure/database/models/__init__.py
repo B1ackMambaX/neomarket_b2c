@@ -7,6 +7,9 @@ from app.infrastructure.database.models.collection import (
 )
 from app.infrastructure.database.models.favorite import FavoriteModel
 from app.infrastructure.database.models.order import OrderItemModel, OrderModel
+from app.infrastructure.database.models.product_event import (
+    ProductEventIdempotencyKeyModel,
+)
 from app.infrastructure.database.models.subscription import ProductSubscriptionModel
 
 __all__ = [
@@ -16,5 +19,6 @@ __all__ = [
     "FavoriteModel",
     "OrderItemModel",
     "OrderModel",
+    "ProductEventIdempotencyKeyModel",
     "ProductSubscriptionModel",
 ]
