@@ -124,6 +124,224 @@ async def test_catalog_returns_filtered_sorted_products(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_search_returns_matching_products(client: AsyncClient):
+    b2b = StubB2BCatalogClient(
+        payload={
+            "items": [
+                {
+                    "id": "770e8400-e29b-41d4-a716-446655440002",
+                    "title": "iPhone 15 Pro Max",
+                    "slug": "iphone-15-pro-max",
+                    "category_id": "123e4567-e89b-12d3-a456-426614174001",
+                    "min_price": 12999000,
+                    "cover_image": "https://cdn.neomarket.ru/images/iphone15.jpg",
+                }
+            ],
+            "total_count": 1,
+            "limit": 20,
+            "offset": 0,
+        }
+    )
+    app.dependency_overrides[get_b2b_catalog_client] = lambda: b2b
+
+    response = await client.get(
+        "/api/v1/catalog/products",
+        params={"q": "  iphone  "},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["items"][0]["title"] == "iPhone 15 Pro Max"
+    assert body["items"][0]["price"] == 12999000
+    assert body["total_count"] == 1
+    assert b2b.calls == [
+        {
+            "limit": 20,
+            "offset": 0,
+            "sort": "popular",
+            "search": "iphone",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_special_chars_do_not_break_query(client: AsyncClient):
+    b2b = StubB2BCatalogClient(
+        payload={
+            "items": [
+                {
+                    "id": "770e8400-e29b-41d4-a716-446655440002",
+                    "title": "iPhone 15 Pro",
+                    "slug": "iphone-15-pro",
+                    "category_id": "123e4567-e89b-12d3-a456-426614174001",
+                    "min_price": 9999000,
+                    "cover_image": "https://cdn.neomarket.ru/images/iphone15pro.jpg",
+                }
+            ],
+            "total_count": 1,
+            "limit": 20,
+            "offset": 0,
+        }
+    )
+    app.dependency_overrides[get_b2b_catalog_client] = lambda: b2b
+
+    response = await client.get(
+        "/api/v1/catalog/products",
+        params={"q": "iPhone%15_'Pro"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"items", "total_count", "limit", "offset"}
+    assert body["items"][0]["title"] == "iPhone 15 Pro"
+    assert body["total_count"] == 1
+    assert body["limit"] == 20
+    assert body["offset"] == 0
+    assert b2b.calls == [
+        {
+            "limit": 20,
+            "offset": 0,
+            "sort": "popular",
+            "search": "iPhone%15_'Pro",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_catalog_products_search_with_filters_and_sort(client: AsyncClient):
+    b2b = StubB2BCatalogClient(
+        payload={
+            "items": [
+                {
+                    "id": "770e8400-e29b-41d4-a716-446655440010",
+                    "title": "Sony WH-1000XM5",
+                    "slug": "sony-wh-1000xm5",
+                    "category_id": "123e4567-e89b-12d3-a456-426614174010",
+                    "min_price": 3499000,
+                    "cover_image": "https://cdn.neomarket.ru/images/sony-xm5.jpg",
+                }
+            ],
+            "total_count": 1,
+            "limit": 10,
+            "offset": 20,
+        }
+    )
+    app.dependency_overrides[get_b2b_catalog_client] = lambda: b2b
+
+    response = await client.get(
+        "/api/v1/catalog/products",
+        params={
+            "q": "наушники",
+            "limit": "10",
+            "offset": "20",
+            "sort": "price_desc",
+            "filter[category_id]": "123e4567-e89b-12d3-a456-426614174010",
+            "filter[price_min]": "1000000",
+            "filter[price_max]": "5000000",
+            "filter[attributes][brand]": "Sony",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["title"] == "Sony WH-1000XM5"
+    assert b2b.calls == [
+        {
+            "limit": 10,
+            "offset": 20,
+            "sort": "price_desc",
+            "search": "наушники",
+            "category_id": "123e4567-e89b-12d3-a456-426614174010",
+            "min_price": "1000000",
+            "max_price": "5000000",
+            "filters[brand]": "Sony",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_short_query_returns_400(
+    client: AsyncClient,
+):
+    b2b = StubB2BCatalogClient()
+    app.dependency_overrides[get_b2b_catalog_client] = lambda: b2b
+
+    response = await client.get(
+        "/api/v1/catalog/products",
+        params={"q": " ip "},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "code": "INVALID_REQUEST",
+        "message": "Search query must be at least 3 characters",
+    }
+    assert b2b.calls == []
+
+
+@pytest.mark.asyncio
+async def test_empty_results_returns_200(
+    client: AsyncClient,
+):
+    b2b = StubB2BCatalogClient(
+        payload={
+            "items": [],
+            "total_count": 0,
+            "limit": 20,
+            "offset": 0,
+        }
+    )
+    app.dependency_overrides[get_b2b_catalog_client] = lambda: b2b
+
+    response = await client.get(
+        "/api/v1/catalog/products",
+        params={"q": "nonexistent"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [],
+        "total_count": 0,
+        "limit": 20,
+        "offset": 0,
+    }
+    assert b2b.calls == [
+        {
+            "limit": 20,
+            "offset": 0,
+            "sort": "popular",
+            "search": "nonexistent",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_catalog_products_search_b2b_unavailable_returns_contract_error(
+    client: AsyncClient,
+):
+    b2b = StubB2BCatalogClient(error=httpx.ConnectError("failed to connect"))
+    app.dependency_overrides[get_b2b_catalog_client] = lambda: b2b
+
+    response = await client.get(
+        "/api/v1/catalog/products",
+        params={"q": "iphone"},
+    )
+
+    assert response.status_code == 502
+    assert response.json() == {
+        "code": "UPSTREAM_SERVICE_UNAVAILABLE",
+        "message": "Catalog upstream unavailable",
+    }
+    assert b2b.calls == [
+        {
+            "limit": 20,
+            "offset": 0,
+            "sort": "popular",
+            "search": "iphone",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_invalid_sort_returns_400(client: AsyncClient):
     response = await client.get(
         "/api/v1/catalog/products",
