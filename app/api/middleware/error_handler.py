@@ -18,6 +18,7 @@ from app.domain.exceptions import (
     SubscriptionAlreadyExistsException,
     UnauthorizedException,
     UpstreamServiceUnavailableException,
+    ValidationException,
 )
 
 _STATUS_MAP = {
@@ -35,6 +36,7 @@ _STATUS_MAP = {
     UnauthorizedException: 401,
     B2BUnavailableException: 503,
     UpstreamServiceUnavailableException: 502,
+    ValidationException: 422,
 }
 
 _HTTP_CODE_MAP = {

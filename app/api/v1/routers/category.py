@@ -16,7 +16,7 @@ from app.schemas.category import (
     CategoryTreeResponse,
 )
 
-from app.services.catalog import CatalogService
+from app.services.catalog_service import CatalogService
 
 
 router = APIRouter(

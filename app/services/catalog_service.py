@@ -5,11 +5,6 @@ from collections import defaultdict
 
 import httpx
 
-from app.domain.exceptions import (
-    InvalidRequestException,
-    NotFoundException,
-    UpstreamServiceUnavailableException,
-)
 from app.schemas.catalog import (
     CatalogProductCard,
     CatalogProductDetail,
@@ -191,10 +186,17 @@ class CatalogService:
 
         try:
 
-            return await self._b2b_client.get_category(
-            category_id,
-            include_product_count=include_product_count,
+            category = await self._b2b_client.get_category(
+                category_id,
+                include_product_count=include_product_count,
             )
+
+            if category is None:
+                raise NotFoundException(
+                    "Category not found"
+                )
+
+            return category
 
         except httpx.HTTPStatusError as exc:
 
@@ -223,9 +225,9 @@ class CatalogService:
 
         if bool(category_id) == bool(product_id):
 
-        raise InvalidRequestException(
-            "only one of category_id or product_id must be provided"
-        )
+            raise InvalidRequestException(
+                "only one of category_id or product_id must be provided"
+            )
 
         try:
 
@@ -368,8 +370,8 @@ class CatalogService:
             "offset": offset,
             "sort": B2B_SORT_MAP[sort],
         }
-        if q:
-            params["search"] = q
+        if search := self._normalize_search_query(q):
+            params["search"] = search
 
         if category_id := filters.get("category_id"):
             params["category_id"] = category_id
@@ -386,6 +388,20 @@ class CatalogService:
                 params[f"filters[{name}]"] = value
 
         return params
+
+    def _normalize_search_query(self, q: str | None) -> str | None:
+        if q is None:
+            return None
+
+        search = q.strip()
+        if not search:
+            return None
+        if len(search) < 3:
+            raise InvalidRequestException(
+                "Search query must be at least 3 characters"
+            )
+
+        return search
 
     def _map_product(self, item: dict[str, Any]) -> CatalogProductCard:
         skus = [self._map_sku(sku) for sku in item.get("skus", [])]
