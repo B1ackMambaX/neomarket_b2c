@@ -58,6 +58,7 @@ class CartService:
                 product=products.get(sku_payloads[item.sku_id]["product_id"])
                 if sku_payloads.get(item.sku_id)
                 else None,
+                stored_unavailable_reason=item.unavailable_reason,
             )
             for item in stored_items
         ]
@@ -242,11 +243,15 @@ class CartService:
         quantity: int,
         sku: dict[str, Any] | None,
         product: dict[str, Any] | None,
+        stored_unavailable_reason: str | None = None,
     ) -> CartItem:
         product_id = (sku or {}).get("product_id") or (product or {}).get("id") or sku_id
         active_quantity = int((sku or {}).get("active_quantity") or 0)
         unit_price = self._current_price(sku)
-        reason = self._unavailable_reason(sku=sku, product=product)
+        reason = stored_unavailable_reason or self._unavailable_reason(
+            sku=sku,
+            product=product,
+        )
         is_available = reason is None
         line_total = unit_price * quantity if is_available else 0
 

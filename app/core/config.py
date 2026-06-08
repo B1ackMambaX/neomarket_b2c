@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     B2B_BASE_URL: str = "http://b2b:8000"
     B2B_SERVICE_KEY: str = "change-me-in-production"
+    B2B_TO_B2C_SERVICE_KEY: str = "change-me-in-production"
     B2B_TIMEOUT_SECONDS: float = 5.0
 
     model_config = SettingsConfigDict(

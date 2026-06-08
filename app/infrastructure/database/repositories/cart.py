@@ -1,4 +1,4 @@
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities.cart import CartIdentity, StoredCartItem
@@ -23,6 +23,7 @@ class SQLAlchemyCartRepository:
                 sku_id=item.sku_id,
                 quantity=item.quantity,
                 updated_at=item.updated_at,
+                unavailable_reason=item.unavailable_reason,
             )
             for item in result.all()
         ]
@@ -41,6 +42,7 @@ class SQLAlchemyCartRepository:
             sku_id=item.sku_id,
             quantity=item.quantity,
             updated_at=item.updated_at,
+            unavailable_reason=item.unavailable_reason,
         )
 
     async def add_item(
@@ -128,6 +130,22 @@ class SQLAlchemyCartRepository:
             await self._session.delete(guest_item)
 
         await self._session.flush()
+
+    async def mark_unavailable_by_sku_ids(
+        self,
+        sku_ids: list[str],
+        unavailable_reason: str,
+    ) -> int:
+        if not sku_ids:
+            return 0
+        stmt = (
+            update(CartItemModel)
+            .where(CartItemModel.sku_id.in_(sku_ids))
+            .values(unavailable_reason=unavailable_reason)
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return result.rowcount or 0
 
     def _identity_filter(self, identity: CartIdentity):
         if identity.is_authenticated:
