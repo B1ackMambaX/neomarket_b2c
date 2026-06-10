@@ -165,6 +165,45 @@ class OrderService:
         saved = await self._orders.save(cancelled_order)
         return OrderResponse.from_entity(saved)
 
+    async def mark_delivered(
+        self,
+        *,
+        order_id: str,
+    ) -> OrderResponse:
+
+        order = await self._orders.get_by_id(
+            order_id,
+            for_update=True,
+        )
+
+        if order is None:
+            raise NotFoundException(
+                "Order not found"
+            )
+
+        if order.status != "DELIVERING":
+            raise InvalidRequestException(
+                "Only DELIVERING order can be delivered"
+            )
+
+        delivered_order = self._with_status(
+            order,
+            status="DELIVERED",
+            reason=None,
+        )
+
+        saved = await self._orders.save(
+            delivered_order
+        )
+
+        await self._fulfill(
+            saved
+        )
+
+        return OrderResponse.from_entity(
+            saved
+        )
+
     def _with_status(
         self,
         order: StoredOrder,
@@ -186,6 +225,11 @@ class OrderService:
             status=status,
             cancel_reason=reason,
             status_history=status_history,
+            delivered_at=(
+                now
+                if status == "DELIVERED"
+                else order.delivered_at
+            ),
         )
 
     async def _resolve_lines(
@@ -275,6 +319,38 @@ class OrderService:
                 for item in order.items
             ],
         )
+
+    async def _fulfill(
+        self,
+        order: StoredOrder,
+    ) -> None:
+
+        try:
+            await self._b2b_client.fulfill_inventory(
+                order_id=order.id,
+                items=[
+                    {
+                        "sku_id": item.sku_id,
+                        "quantity": item.quantity,
+                    }
+                    for item in order.items
+                ],
+            )
+
+        except httpx.HTTPStatusError as exc:
+
+            logger.exception(
+                "Failed to fulfill order %s (HTTP %s)",
+                order.id,
+                exc.response.status_code,
+            )
+
+        except httpx.HTTPError:
+
+            logger.exception(
+                "Failed to fulfill order %s",
+                order.id,
+            )
 
     def _validate_lines(
         self,

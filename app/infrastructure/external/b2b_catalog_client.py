@@ -117,6 +117,27 @@ class B2BCatalogClient:
             )
             response.raise_for_status()
             return response.json()
+            
+    async def fulfill_inventory(
+        self,
+        *,
+        order_id: str,
+        items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers=self._headers,
+            timeout=self._timeout,
+        ) as client:
+            response = await client.post(
+                "/api/v1/fulfill",
+                json={
+                    "order_id": order_id,
+                    "items": items,
+                },
+            )
+            response.raise_for_status()
+            return response.json()
 
     async def get_facets(
         self,

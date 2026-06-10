@@ -55,3 +55,26 @@ async def cancel_order(
         order_id=order_id,
         request=request,
     )
+
+@router.post(
+    "/{order_id}/deliver",
+    response_model=OrderResponse,
+    summary="Mark order as delivered",
+)
+async def deliver_order(
+    order_id: str,
+    buyer_id: str = Depends(resolve_buyer_id),
+    order_repository: OrderRepository = Depends(get_order_repository),
+    cart_repository: CartRepository = Depends(get_cart_repository),
+    b2b_client: B2BCatalogClientProtocol = Depends(get_b2b_catalog_client),
+) -> OrderResponse:
+
+    service = OrderService(
+        order_repository,
+        cart_repository,
+        b2b_client,
+    )
+
+    return await service.mark_delivered(
+        order_id=order_id,
+    )
