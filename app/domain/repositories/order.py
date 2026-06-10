@@ -27,3 +27,11 @@ class OrderRepository(Protocol):
 
     async def delete(self, order_id: str) -> None:
         raise NotImplementedError
+
+    async def get_by_id(
+        self,
+        order_id: str,
+        *,
+        for_update: bool = False,
+    ) -> StoredOrder | None:
+        raise NotImplementedError

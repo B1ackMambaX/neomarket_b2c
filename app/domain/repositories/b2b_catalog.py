@@ -22,3 +22,10 @@ class B2BCatalogClientProtocol(Protocol):
         order_id: str,
         items: list[dict[str, Any]],
     ) -> dict[str, Any]: ...
+
+    async def fulfill_inventory(
+        self,
+        *,
+        order_id: str,
+        items: list[dict[str, Any]],
+    ) -> dict[str, Any]: ...

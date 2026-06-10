@@ -22,6 +22,29 @@ class SQLAlchemyOrderRepository:
             return None
         return self._map_order(order)
 
+    async def get_by_id(
+        self,
+        order_id: str,
+        *,
+        for_update: bool = False,
+    ) -> StoredOrder | None:
+
+        stmt = (
+            select(OrderModel)
+            .options(selectinload(OrderModel.items))
+            .where(OrderModel.id == order_id)
+        )
+
+        if for_update:
+            stmt = stmt.with_for_update()
+
+        order = await self._session.scalar(stmt)
+
+        if order is None:
+            return None
+
+        return self._map_order(order)
+
     async def get_by_id_for_buyer(
         self,
         order_id: str,

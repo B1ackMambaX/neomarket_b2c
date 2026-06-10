@@ -628,3 +628,111 @@ async def test_missing_idempotency_key_returns_error_shape(client: AsyncClient):
     body = response.json()
     assert body["code"] == "VALIDATION_ERROR"
     assert body["message"] == "Invalid request"
+
+@pytest.mark.asyncio
+async def test_delivered_status_triggers_fulfill_to_b2b():
+
+    order = StoredOrder(
+        id="order-1",
+        number="NM-001",
+        buyer_id="buyer-1",
+        idempotency_key="key",
+        request_hash="hash",
+        status="DELIVERING",
+        items=[],
+        subtotal=100,
+        delivery_cost=0,
+        total=100,
+        address_id="addr",
+        payment_method_id="pay",
+        comment=None,
+        cancel_reason=None,
+        status_history=[],
+        created_at=datetime.now(timezone.utc),
+        paid_at=datetime.now(timezone.utc),
+        delivered_at=None,
+    )
+
+    repo = AsyncMock()
+    repo.get_by_id.return_value = order
+    repo.save.side_effect = lambda o: o
+
+    cart = AsyncMock()
+    client = AsyncMock()
+
+    service = OrderService(
+        repo,
+        cart,
+        client,
+    )
+
+    result = await service.mark_delivered(
+        order_id=order.id,
+    )
+
+    assert result.status == "DELIVERED"
+
+    client.fulfill_inventory.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_fulfill_failure_does_not_break_delivery():
+
+    order = StoredOrder(
+        id="order-1",
+        number="NM-001",
+        buyer_id="buyer-1",
+        idempotency_key="key",
+        request_hash="hash",
+        status="DELIVERING",
+        items=[],
+        subtotal=100,
+        delivery_cost=0,
+        total=100,
+        address_id="addr",
+        payment_method_id="pay",
+        comment=None,
+        cancel_reason=None,
+        status_history=[],
+        created_at=datetime.now(timezone.utc),
+        paid_at=datetime.now(timezone.utc),
+        delivered_at=None,
+    )
+
+    repo = AsyncMock()
+    repo.get_by_id.return_value = order
+    repo.save.side_effect = lambda o: o
+
+    cart = AsyncMock()
+    client = AsyncMock()
+
+    request = httpx.Request(
+        "POST",
+        "/api/v1/fulfill",
+    )
+
+    response = httpx.Response(
+        500,
+        request=request,
+    )
+
+    client.fulfill_inventory.side_effect = httpx.HTTPStatusError(
+        "fail",
+        request=request,
+        response=response,
+    )
+
+    service = OrderService(
+        repo,
+        cart,
+        client,
+    )
+
+    result = await service.mark_delivered(
+        order_id=order.id,
+    )
+
+    assert result.status == "DELIVERED"
+
+    client.fulfill_inventory.assert_awaited_once()
+
+    repo.save.assert_awaited()
