@@ -2,9 +2,86 @@ import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient, Request, Response
 
-from app.api.v1.dependencies.catalog import get_b2b_catalog_client
+from app.api.v1.dependencies.catalog import (
+    get_b2b_catalog_client,
+    get_catalog_snapshot_repository,
+)
 from app.main import app
-from app.services import catalog_service
+
+
+class FakeCatalogSnapshotRepository:
+    def __init__(self, snapshots: list[dict] | None = None) -> None:
+        self._snapshots: list[dict] = list(snapshots or [])
+        self.facets_calls: list[dict] = []
+
+    async def upsert(
+        self, *, product_id, category_id, title, characteristics, min_price, has_stock
+    ) -> None:
+        for s in self._snapshots:
+            if s["product_id"] == product_id:
+                s.update(
+                    category_id=category_id,
+                    title=title,
+                    characteristics=characteristics,
+                    min_price=min_price,
+                    has_stock=has_stock,
+                    is_active=True,
+                )
+                return
+        self._snapshots.append(
+            dict(
+                product_id=product_id,
+                category_id=category_id,
+                title=title,
+                characteristics=characteristics,
+                min_price=min_price,
+                has_stock=has_stock,
+                is_active=True,
+            )
+        )
+
+    async def deactivate(self, product_id: str) -> None:
+        for s in self._snapshots:
+            if s["product_id"] == product_id:
+                s["is_active"] = False
+
+    async def set_stock(self, *, product_id: str, has_stock: bool) -> None:
+        for s in self._snapshots:
+            if s["product_id"] == product_id:
+                s["has_stock"] = has_stock
+
+    async def get_facets(self, *, category_id, filters) -> list[dict]:
+        self.facets_calls.append({"category_id": category_id, "filters": dict(filters)})
+        active = [s for s in self._snapshots if s.get("is_active", True)]
+        if category_id:
+            active = [s for s in active if s.get("category_id") == category_id]
+        for fname, fvalue in filters.items():
+            fvalues = [fvalue] if isinstance(fvalue, str) else list(fvalue)
+            active = [
+                s for s in active
+                if any(
+                    c.get("name") == fname and c.get("value") in fvalues
+                    for c in s.get("characteristics", [])
+                )
+            ]
+        counts: dict[str, dict[str, int]] = {}
+        for snapshot in active:
+            for char in snapshot.get("characteristics", []):
+                name = char.get("name")
+                value = char.get("value")
+                if name and value:
+                    counts.setdefault(name, {}).setdefault(value, 0)
+                    counts[name][value] += 1
+        return [
+            {
+                "name": name,
+                "values": [
+                    {"value": v, "count": c}
+                    for v, c in sorted(vals.items(), key=lambda x: -x[1])
+                ],
+            }
+            for name, vals in counts.items()
+        ]
 
 
 class StubB2BCatalogClient:
@@ -49,13 +126,6 @@ class StubB2BCatalogClient:
         if self.error:
             raise self.error
         return self.facets_payload
-
-
-@pytest.fixture(autouse=True)
-def clear_facets_cache():
-    catalog_service._facets_cache.clear()
-    yield
-    catalog_service._facets_cache.clear()
 
 
 @pytest.fixture
@@ -563,50 +633,95 @@ async def test_similar_invalid_product_id_returns_validation_error(
 
 
 @pytest.mark.asyncio
-async def test_facets_return_counts_per_filter_value(client: AsyncClient):
-    b2b = StubB2BCatalogClient(
-        facets_payload={
-            "category_id": "123e4567-e89b-12d3-a456-426614174001",
-            "facets": [
-                {
-                    "name": "brand",
-                    "values": [
-                        {"value": "Apple", "count": 124},
-                        {"value": "Samsung", "count": 98},
-                    ],
-                },
-                {
-                    "name": "color",
-                    "values": [
-                        {"value": "черный", "count": 60},
-                        {"value": "белый", "count": 45},
-                    ],
-                },
-            ],
-        }
+async def test_facets_computed_from_local_snapshot(client: AsyncClient):
+    category_id = "123e4567-e89b-12d3-a456-426614174001"
+    snapshot_repo = FakeCatalogSnapshotRepository(
+        snapshots=[
+            {
+                "product_id": "770e8400-e29b-41d4-a716-446655440001",
+                "category_id": category_id,
+                "title": "iPhone 15 Pro Max",
+                "characteristics": [
+                    {"name": "brand", "value": "Apple"},
+                    {"name": "color", "value": "черный"},
+                ],
+                "min_price": 12999000,
+                "has_stock": True,
+                "is_active": True,
+            },
+            {
+                "product_id": "770e8400-e29b-41d4-a716-446655440002",
+                "category_id": category_id,
+                "title": "iPhone 15",
+                "characteristics": [
+                    {"name": "brand", "value": "Apple"},
+                    {"name": "color", "value": "белый"},
+                ],
+                "min_price": 9999000,
+                "has_stock": True,
+                "is_active": True,
+            },
+            {
+                "product_id": "770e8400-e29b-41d4-a716-446655440003",
+                "category_id": category_id,
+                "title": "Samsung Galaxy S24",
+                "characteristics": [
+                    {"name": "brand", "value": "Samsung"},
+                    {"name": "color", "value": "черный"},
+                ],
+                "min_price": 8999000,
+                "has_stock": True,
+                "is_active": True,
+            },
+        ]
     )
+    b2b = StubB2BCatalogClient()
     app.dependency_overrides[get_b2b_catalog_client] = lambda: b2b
+    app.dependency_overrides[get_catalog_snapshot_repository] = lambda: snapshot_repo
 
     response = await client.get(
         "/api/v1/catalog/facets",
         params={
-            "category_id": "123e4567-e89b-12d3-a456-426614174001",
+            "category_id": category_id,
             "filter[attributes][brand]": "Apple",
         },
     )
 
     assert response.status_code == 200
     body = response.json()
-    assert body["category_id"] == "123e4567-e89b-12d3-a456-426614174001"
-    assert len(body["facets"]) == 2
+    assert body["category_id"] == category_id
     brand_facet = next(f for f in body["facets"] if f["name"] == "brand")
-    assert brand_facet["values"][0] == {"value": "Apple", "count": 124}
-    assert b2b.facets_calls == [
-        {
-            "category_id": "123e4567-e89b-12d3-a456-426614174001",
-            "filters": {"brand": "Apple"},
-        }
+    assert brand_facet["values"][0] == {"value": "Apple", "count": 2}
+    # Facets computed locally — B2B is never called
+    assert b2b.facets_calls == []
+    assert snapshot_repo.facets_calls == [
+        {"category_id": category_id, "filters": {"brand": "Apple"}}
     ]
+
+
+@pytest.mark.asyncio
+async def test_product_without_stock_field_shows_as_unavailable(client: AsyncClient):
+    b2b = StubB2BCatalogClient(
+        payload={
+            "items": [
+                {
+                    "id": "770e8400-e29b-41d4-a716-446655440099",
+                    "title": "Ghost Product",
+                    "min_price": 100,
+                    # has_stock and in_stock deliberately absent; no skus
+                }
+            ],
+            "total_count": 1,
+            "limit": 20,
+            "offset": 0,
+        }
+    )
+    app.dependency_overrides[get_b2b_catalog_client] = lambda: b2b
+
+    response = await client.get("/api/v1/catalog/products")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["has_stock"] is False
 
 
 def _product_card_payload(product_id: str) -> dict:

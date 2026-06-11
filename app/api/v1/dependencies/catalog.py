@@ -2,6 +2,9 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_db
+from app.infrastructure.database.repositories.catalog_snapshot import (
+    SQLAlchemyCatalogSnapshotRepository,
+)
 from app.infrastructure.database.repositories.collection import (
     SQLAlchemyCollectionRepository,
 )
@@ -16,3 +19,9 @@ async def get_collections_repository(
     session: AsyncSession = Depends(get_db),
 ) -> SQLAlchemyCollectionRepository:
     return SQLAlchemyCollectionRepository(session)
+
+
+async def get_catalog_snapshot_repository(
+    session: AsyncSession = Depends(get_db),
+) -> SQLAlchemyCatalogSnapshotRepository:
+    return SQLAlchemyCatalogSnapshotRepository(session)

@@ -1,8 +1,9 @@
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 
 from app.api.v1.dependencies.cart import get_cart_repository
+from app.api.v1.dependencies.catalog import get_catalog_snapshot_repository
 from app.api.v1.dependencies.events import (
     get_product_event_repository,
     verify_b2b_service_key,
@@ -28,6 +29,11 @@ async def handle_product_event(
     product_event_repository: ProductEventRepository = Depends(
         get_product_event_repository
     ),
+    catalog_snapshot_repository: Any = Depends(get_catalog_snapshot_repository),
 ) -> ProductEventResponse:
-    service = ProductEventService(cart_repository, product_event_repository)
+    service = ProductEventService(
+        cart_repository,
+        product_event_repository,
+        catalog_snapshot_repository,
+    )
     return await service.handle_product_event(request)
