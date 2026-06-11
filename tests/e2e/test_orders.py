@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -12,6 +13,7 @@ from app.core.config import settings
 from app.domain.entities.cart import CartIdentity
 from app.domain.entities.order import StoredOrder, StoredOrderItem
 from app.main import app
+from app.services.order_service import OrderService
 
 
 @pytest.fixture(autouse=True)

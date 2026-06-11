@@ -6,12 +6,15 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1.dependencies.catalog import (
     get_b2b_catalog_client,
+    get_catalog_snapshot_repository,
     get_collections_repository,
 )
 from app.schemas.catalog import (
     CatalogCollection,
     CatalogProductCard,
     CatalogProductDetail,
+    Facet,
+    FacetValue,
     FacetsResponse,
     PaginatedCatalogProducts,
 )
@@ -103,12 +106,24 @@ async def get_similar_products(
 async def get_catalog_facets(
     request: Request,
     category_id: str | None = Query(default=None),
-    b2b_client: Any = Depends(get_b2b_catalog_client),
+    snapshot_repo: Any = Depends(get_catalog_snapshot_repository),
 ) -> FacetsResponse:
-    service = CatalogService(b2b_client)
     filters = _parse_filter_query(request)
-    filters.pop("category_id", None)  # category_id is a dedicated param, not a filter
-    return await service.get_facets(category_id=category_id, filters=filters)
+    filters.pop("category_id", None)
+    raw_facets = await snapshot_repo.get_facets(
+        category_id=category_id,
+        filters=filters,
+    )
+    return FacetsResponse(
+        category_id=category_id,
+        facets=[
+            Facet(
+                name=f["name"],
+                values=[FacetValue(value=v["value"], count=v["count"]) for v in f["values"]],
+            )
+            for f in raw_facets
+        ],
+    )
 
 
 _ATTR_PREFIX = "filter[attributes]["

@@ -1,7 +1,5 @@
-import hashlib
-import time
-from typing import Any
 from collections import defaultdict
+from typing import Any
 
 import httpx
 
@@ -10,9 +8,6 @@ from app.schemas.catalog import (
     CatalogProductDetail,
     CatalogSku,
     CategoryRef,
-    Facet,
-    FacetValue,
-    FacetsResponse,
     ImageRef,
     PaginatedCatalogProducts,
     SellerRef,
@@ -23,17 +18,6 @@ from app.domain.exceptions import (
     UpstreamServiceUnavailableException,
     ValidationException,
 )
-
-_FACETS_TTL = 60.0
-_facets_cache: dict[str, tuple[float, FacetsResponse]] = {}
-
-
-def _make_facets_cache_key(category_id: str | None, filters: dict[str, Any]) -> str:
-    raw = (
-        f"{category_id or ''}|"
-        f"{'&'.join(f'{k}={v}' for k, v in sorted(filters.items()))}"
-    )
-    return hashlib.sha1(raw.encode()).hexdigest()
 
 B2C_ALLOWED_SORTS = ("price_asc", "price_desc", "popularity", "new")
 B2B_SORT_MAP = {
@@ -318,44 +302,6 @@ class CatalogService:
             },
         }
 
-    async def get_facets(
-        self,
-        *,
-        category_id: str | None,
-        filters: dict[str, Any],
-    ) -> FacetsResponse:
-        cache_key = _make_facets_cache_key(category_id, filters)
-        cached = _facets_cache.get(cache_key)
-        if cached and time.monotonic() - cached[0] < _FACETS_TTL:
-            return cached[1]
-
-        try:
-            payload = await self._b2b_client.get_facets(
-                category_id=category_id, filters=filters
-            )
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 404:
-                raise NotFoundException("Category not found") from exc
-            raise UpstreamServiceUnavailableException("Catalog upstream failed") from exc
-        except httpx.HTTPError as exc:
-            raise UpstreamServiceUnavailableException("Catalog upstream unavailable") from exc
-
-        result = FacetsResponse(
-            category_id=payload.get("category_id"),
-            facets=[
-                Facet(
-                    name=f["name"],
-                    values=[
-                        FacetValue(value=v["value"], count=v["count"])
-                        for v in f["values"]
-                    ],
-                )
-                for f in payload.get("facets", [])
-            ],
-        )
-        _facets_cache[cache_key] = (time.monotonic(), result)
-        return result
-
     def _build_b2b_params(
         self,
         *,
@@ -455,9 +401,7 @@ class CatalogService:
         if has_stock is None:
             has_stock = item.get("in_stock")
         if has_stock is None:
-            has_stock = (
-                any(sku.available_quantity > 0 for sku in skus) if skus else True
-            )
+            has_stock = any(sku.available_quantity > 0 for sku in skus) if skus else False
 
         old_price = item.get("old_price")
         if old_price is None:

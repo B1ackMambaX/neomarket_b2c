@@ -1,9 +1,11 @@
 from dataclasses import replace
+from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.api.v1.dependencies.cart import get_cart_repository
+from app.api.v1.dependencies.catalog import get_catalog_snapshot_repository
 from app.api.v1.dependencies.events import get_product_event_repository
 from app.core.config import settings
 from app.domain.entities.cart import CartIdentity, StoredCartItem
@@ -73,6 +75,34 @@ class TrackingCartRepository:
                 new_items.append(item)
         self.items = new_items
         return updated
+
+
+class FakeCatalogSnapshotRepository:
+    def __init__(self) -> None:
+        self._snapshots: dict[str, dict[str, Any]] = {}
+
+    async def upsert(
+        self, *, product_id, category_id, title, characteristics, min_price, has_stock
+    ) -> None:
+        self._snapshots[product_id] = dict(
+            category_id=category_id,
+            title=title,
+            characteristics=characteristics,
+            min_price=min_price,
+            has_stock=has_stock,
+            is_active=True,
+        )
+
+    async def deactivate(self, product_id: str) -> None:
+        if product_id in self._snapshots:
+            self._snapshots[product_id]["is_active"] = False
+
+    async def set_stock(self, *, product_id: str, has_stock: bool) -> None:
+        if product_id in self._snapshots:
+            self._snapshots[product_id]["has_stock"] = has_stock
+
+    async def get_facets(self, *, category_id, filters) -> list[dict]:
+        return []
 
 
 class FakeProductEventRepository:
@@ -147,6 +177,9 @@ async def test_product_blocked_marks_cart_items_unavailable(client: AsyncClient)
     app.dependency_overrides[get_product_event_repository] = (
         lambda: product_event_repository
     )
+    app.dependency_overrides[get_catalog_snapshot_repository] = (
+        lambda: FakeCatalogSnapshotRepository()
+    )
 
     response = await client.post(
         "/api/v1/b2b/events",
@@ -177,6 +210,9 @@ async def test_orders_not_affected_by_product_blocked(client: AsyncClient):
     app.dependency_overrides[get_product_event_repository] = (
         lambda: product_event_repository
     )
+    app.dependency_overrides[get_catalog_snapshot_repository] = (
+        lambda: FakeCatalogSnapshotRepository()
+    )
 
     response = await client.post(
         "/api/v1/b2b/events",
@@ -205,6 +241,9 @@ async def test_idempotent_event_no_side_effects(client: AsyncClient):
     app.dependency_overrides[get_cart_repository] = lambda: cart_repository
     app.dependency_overrides[get_product_event_repository] = (
         lambda: product_event_repository
+    )
+    app.dependency_overrides[get_catalog_snapshot_repository] = (
+        lambda: FakeCatalogSnapshotRepository()
     )
     payload = product_blocked_payload(
         sku_ids=[sku_id],
@@ -258,6 +297,9 @@ async def test_product_deleted_marks_cart_items_unavailable(client: AsyncClient)
     app.dependency_overrides[get_product_event_repository] = (
         lambda: product_event_repository
     )
+    app.dependency_overrides[get_catalog_snapshot_repository] = (
+        lambda: FakeCatalogSnapshotRepository()
+    )
 
     payload = {
         "idempotency_key": "e8f9a0b1-c2d3-4567-abcd-890123456789",
@@ -298,6 +340,9 @@ async def test_sku_out_of_stock_marks_cart_items_unavailable(client: AsyncClient
     app.dependency_overrides[get_cart_repository] = lambda: cart_repository
     app.dependency_overrides[get_product_event_repository] = (
         lambda: product_event_repository
+    )
+    app.dependency_overrides[get_catalog_snapshot_repository] = (
+        lambda: FakeCatalogSnapshotRepository()
     )
 
     payload = {
