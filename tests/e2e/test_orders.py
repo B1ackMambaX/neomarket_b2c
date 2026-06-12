@@ -26,6 +26,24 @@ class FakeOrderRepository:
     def __init__(self) -> None:
         self.orders: list[StoredOrder] = []
 
+    async def list_for_buyer(
+        self,
+        buyer_id: str,
+        *,
+        limit: int,
+        offset: int,
+        status: str | None = None,
+    ) -> tuple[list[StoredOrder], int]:
+        orders = [order for order in self.orders if order.buyer_id == buyer_id]
+        if status is not None:
+            orders = [order for order in orders if order.status == status]
+        orders = sorted(
+            orders,
+            key=lambda order: (order.created_at or datetime.min, order.id),
+            reverse=True,
+        )
+        return orders[offset : offset + limit], len(orders)
+
     async def get_by_idempotency_key(self, idempotency_key: str) -> StoredOrder | None:
         return next(
             (
@@ -51,6 +69,14 @@ class FakeOrderRepository:
             ),
             None,
         )
+
+    async def get_by_id(
+        self,
+        order_id: str,
+        *,
+        for_update: bool = False,
+    ) -> StoredOrder | None:
+        return next((order for order in self.orders if order.id == order_id), None)
 
     async def create_or_get_by_idempotency_key(
         self,
@@ -237,6 +263,116 @@ def make_order(
         created_at=created_at,
         paid_at=created_at if status != "CREATED" else None,
     )
+
+
+@pytest.mark.asyncio
+async def test_orders_list_returns_own_orders_paginated(client: AsyncClient):
+    first_order = make_order(
+        order_id="55555555-5555-4555-8555-555555555557",
+        status="PAID",
+    )
+    second_order = make_order(
+        order_id="55555555-5555-4555-8555-555555555556",
+        status="PAID",
+    )
+    other_status_order = make_order(
+        order_id="55555555-5555-4555-8555-555555555558",
+        status="CANCELLED",
+    )
+    other_user_order = make_order(
+        order_id="55555555-5555-4555-8555-555555555559",
+        buyer_id="99999999-9999-4999-8999-999999999999",
+        status="PAID",
+    )
+    order_repository = FakeOrderRepository()
+    order_repository.orders.extend(
+        [first_order, second_order, other_status_order, other_user_order]
+    )
+    app.dependency_overrides[get_order_repository] = lambda: order_repository
+    app.dependency_overrides[get_cart_repository] = lambda: EmptyCartRepository()
+    app.dependency_overrides[get_b2b_catalog_client] = lambda: StubB2BOrdersClient(
+        skus={},
+        products=[],
+    )
+
+    response = await client.get(
+        "/api/v1/orders",
+        params={"status": "PAID", "limit": "1", "offset": "1"},
+        headers={"Authorization": auth_headers()["Authorization"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 2
+    assert body["limit"] == 1
+    assert body["offset"] == 1
+    assert [item["id"] for item in body["items"]] == [second_order.id]
+    assert all(item["buyer_id"] != other_user_order.buyer_id for item in body["items"])
+
+
+@pytest.mark.asyncio
+async def test_order_detail_shows_fixed_prices(client: AsyncClient):
+    order = make_order(status="PAID")
+    order_repository = FakeOrderRepository()
+    order_repository.orders.append(order)
+    b2b = StubB2BOrdersClient(
+        skus={
+            order.items[0].sku_id: {
+                "id": order.items[0].sku_id,
+                "product_id": order.items[0].product_id,
+                "price": 14999000,
+                "discount": 0,
+                "active_quantity": 10,
+            }
+        },
+        products=[
+            {
+                "id": order.items[0].product_id,
+                "title": "iPhone 15 Pro",
+                "status": "MODERATED",
+            }
+        ],
+    )
+    app.dependency_overrides[get_order_repository] = lambda: order_repository
+    app.dependency_overrides[get_cart_repository] = lambda: EmptyCartRepository()
+    app.dependency_overrides[get_b2b_catalog_client] = lambda: b2b
+
+    response = await client.get(
+        f"/api/v1/orders/{order.id}",
+        headers={"Authorization": auth_headers()["Authorization"]},
+    )
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["unit_price"] == 11999000
+    assert item["line_total"] == 23998000
+
+
+@pytest.mark.asyncio
+async def test_other_user_order_returns_404_not_403(client: AsyncClient):
+    order = make_order(
+        buyer_id="99999999-9999-4999-8999-999999999999",
+        status="PAID",
+    )
+    order_repository = FakeOrderRepository()
+    order_repository.orders.append(order)
+    app.dependency_overrides[get_order_repository] = lambda: order_repository
+    app.dependency_overrides[get_cart_repository] = lambda: EmptyCartRepository()
+    app.dependency_overrides[get_b2b_catalog_client] = lambda: StubB2BOrdersClient(
+        skus={},
+        products=[],
+    )
+
+    response = await client.get(
+        f"/api/v1/orders/{order.id}",
+        headers={"Authorization": auth_headers()["Authorization"]},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "code": "NOT_FOUND",
+        "message": "Order not found",
+    }
 
 
 @pytest.mark.asyncio

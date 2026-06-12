@@ -5,6 +5,16 @@ from pydantic import BaseModel, Field
 
 from app.domain.entities.order import StoredOrder
 
+OrderStatus = Literal[
+    "CREATED",
+    "PAID",
+    "ASSEMBLING",
+    "DELIVERING",
+    "DELIVERED",
+    "CANCELLED",
+    "CANCEL_PENDING",
+]
+
 
 class OrderItemSnapshot(BaseModel):
     sku_id: str
@@ -69,15 +79,7 @@ class OrderResponse(BaseModel):
     id: str
     number: str
     buyer_id: str
-    status: Literal[
-        "CREATED",
-        "PAID",
-        "ASSEMBLING",
-        "DELIVERING",
-        "DELIVERED",
-        "CANCELLED",
-        "CANCEL_PENDING",
-    ]
+    status: OrderStatus
     status_history: list[OrderStatusHistoryItem] = Field(default_factory=list)
     items: list[OrderItem]
     subtotal: int
@@ -129,3 +131,10 @@ class OrderResponse(BaseModel):
             paid_at=order.paid_at,
             delivered_at=order.delivered_at,
         )
+
+
+class PaginatedOrders(BaseModel):
+    items: list[OrderResponse]
+    total_count: int
+    limit: int
+    offset: int

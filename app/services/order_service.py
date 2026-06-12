@@ -10,7 +10,12 @@ from typing import Any
 import httpx
 
 from app.domain.entities.cart import CartIdentity
-from app.domain.entities.order import OrderLineInput, StatusHistoryEntry, StoredOrder, StoredOrderItem
+from app.domain.entities.order import (
+    OrderLineInput,
+    StatusHistoryEntry,
+    StoredOrder,
+    StoredOrderItem,
+)
 from app.domain.exceptions import (
     B2BUnavailableException,
     CancelNotAllowedException,
@@ -22,7 +27,12 @@ from app.domain.exceptions import (
 from app.domain.repositories.b2b_catalog import B2BCatalogClientProtocol
 from app.domain.repositories.cart import CartRepository
 from app.domain.repositories.order import OrderRepository
-from app.schemas.order import OrderCancelRequest, OrderCreateRequest, OrderResponse
+from app.schemas.order import (
+    OrderCancelRequest,
+    OrderCreateRequest,
+    OrderResponse,
+    PaginatedOrders,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +84,8 @@ class OrderService:
         order_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
         order_items = [
-            self._build_item(line, sku_payloads[line.sku_id], products) for line in lines
+            self._build_item(line, sku_payloads[line.sku_id], products)
+            for line in lines
         ]
         subtotal = sum(item.line_total for item in order_items)
         order = StoredOrder(
@@ -117,6 +128,38 @@ class OrderService:
 
         return OrderResponse.from_entity(created)
 
+    async def list_orders(
+        self,
+        *,
+        buyer_id: str,
+        limit: int,
+        offset: int,
+        status: str | None = None,
+    ) -> PaginatedOrders:
+        orders, total_count = await self._orders.list_for_buyer(
+            buyer_id,
+            limit=limit,
+            offset=offset,
+            status=status,
+        )
+        return PaginatedOrders(
+            items=[OrderResponse.from_entity(order) for order in orders],
+            total_count=total_count,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def get_order(
+        self,
+        *,
+        buyer_id: str,
+        order_id: str,
+    ) -> OrderResponse:
+        order = await self._orders.get_by_id_for_buyer(order_id, buyer_id)
+        if order is None:
+            raise NotFoundException("Order not found")
+        return OrderResponse.from_entity(order)
+
     async def cancel_order(
         self,
         *,
@@ -124,7 +167,11 @@ class OrderService:
         order_id: str,
         request: OrderCancelRequest | None = None,
     ) -> OrderResponse:
-        order = await self._orders.get_by_id_for_buyer(order_id, buyer_id, for_update=True)
+        order = await self._orders.get_by_id_for_buyer(
+            order_id,
+            buyer_id,
+            for_update=True,
+        )
         if order is None:
             raise NotFoundException("Order not found")
 
@@ -406,7 +453,11 @@ class OrderService:
         product = products[sku["product_id"]]
         product_title = product.get("title") or product.get("name") or sku["product_id"]
         sku_name = sku.get("name") or line.sku_id
-        unit_price = line.unit_price if line.unit_price is not None else self._current_price(sku)
+        unit_price = (
+            line.unit_price
+            if line.unit_price is not None
+            else self._current_price(sku)
+        )
         return StoredOrderItem(
             id=str(uuid.uuid4()),
             sku_id=line.sku_id,

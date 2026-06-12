@@ -4,6 +4,16 @@ from app.domain.entities.order import StoredOrder
 
 
 class OrderRepository(Protocol):
+    async def list_for_buyer(
+        self,
+        buyer_id: str,
+        *,
+        limit: int,
+        offset: int,
+        status: str | None = None,
+    ) -> tuple[list[StoredOrder], int]:
+        raise NotImplementedError
+
     async def get_by_idempotency_key(self, idempotency_key: str) -> StoredOrder | None:
         raise NotImplementedError
 

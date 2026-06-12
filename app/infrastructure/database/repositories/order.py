@@ -1,4 +1,4 @@
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -10,6 +10,32 @@ from app.infrastructure.database.models.order import OrderItemModel, OrderModel
 class SQLAlchemyOrderRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def list_for_buyer(
+        self,
+        buyer_id: str,
+        *,
+        limit: int,
+        offset: int,
+        status: str | None = None,
+    ) -> tuple[list[StoredOrder], int]:
+        filters = [OrderModel.buyer_id == buyer_id]
+        if status is not None:
+            filters.append(OrderModel.status == status)
+
+        total_stmt = select(func.count()).select_from(OrderModel).where(*filters)
+        total = await self._session.scalar(total_stmt)
+
+        stmt = (
+            select(OrderModel)
+            .options(selectinload(OrderModel.items))
+            .where(*filters)
+            .order_by(OrderModel.created_at.desc(), OrderModel.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self._session.scalars(stmt)
+        return [self._map_order(order) for order in result.all()], int(total or 0)
 
     async def get_by_idempotency_key(self, idempotency_key: str) -> StoredOrder | None:
         stmt = (
