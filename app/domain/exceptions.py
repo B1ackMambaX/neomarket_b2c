@@ -86,3 +86,11 @@ class SubscriptionAlreadyExistsException(DomainException):
 
 class InvalidNotifyOnException(DomainException):
     code = "INVALID_NOTIFY_ON"
+
+
+class BannerNotFoundException(DomainException):
+    code = "BANNER_NOT_FOUND"
+
+
+class EmptyEventsException(DomainException):
+    code = "EMPTY_EVENTS"

@@ -9,7 +9,7 @@ from app.api.middleware.error_handler import (
     http_exception_handler,
     validation_exception_handler,
 )
-from app.api.v1.routers import cart, catalog, category, events, favorites, orders
+from app.api.v1.routers import banners, cart, catalog, category, events, favorites, orders
 from app.core.config import ALLOWED_ORIGINS, settings
 from app.core.database import engine
 from app.domain.exceptions import DomainException
@@ -40,6 +40,7 @@ app.add_exception_handler(DomainException, domain_exception_handler)
 app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
+app.include_router(banners.router, prefix="/api/v1")
 app.include_router(catalog.router, prefix="/api/v1")
 app.include_router(cart.router, prefix="/api/v1")
 app.include_router(favorites.router, prefix="/api/v1")
