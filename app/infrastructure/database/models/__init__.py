@@ -1,5 +1,6 @@
 # Импортируй сюда все модели, чтобы Alembic autogenerate их видел
 # from app.infrastructure.database.models import order, company, user
+from app.infrastructure.database.models.banner import BannerEventModel, BannerModel
 from app.infrastructure.database.models.cart import CartItemModel
 from app.infrastructure.database.models.collection import (
     CollectionModel,
@@ -13,6 +14,8 @@ from app.infrastructure.database.models.product_event import (
 from app.infrastructure.database.models.subscription import ProductSubscriptionModel
 
 __all__ = [
+    "BannerEventModel",
+    "BannerModel",
     "CartItemModel",
     "CollectionModel",
     "CollectionProductModel",

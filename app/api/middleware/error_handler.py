@@ -3,10 +3,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.domain.exceptions import (
+    BannerNotFoundException,
     B2BUnavailableException,
     CancelNotAllowedException,
     DomainException,
     ConflictException,
+    EmptyEventsException,
     IdempotencyConflictException,
     InvalidNotifyOnException,
     InvalidRequestException,
