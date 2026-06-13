@@ -130,7 +130,7 @@ class B2BCatalogClient:
             timeout=self._timeout,
         ) as client:
             response = await client.post(
-                "/api/v1/fulfill",
+                "/api/v1/inventory/fulfill",
                 json={
                     "order_id": order_id,
                     "items": items,
