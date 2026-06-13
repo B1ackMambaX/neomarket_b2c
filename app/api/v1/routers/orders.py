@@ -124,5 +124,6 @@ async def deliver_order(
     )
 
     return await service.mark_delivered(
+        buyer_id=buyer_id,
         order_id=order_id,
     )

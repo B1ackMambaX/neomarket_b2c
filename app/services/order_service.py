@@ -215,11 +215,13 @@ class OrderService:
     async def mark_delivered(
         self,
         *,
+        buyer_id: str,
         order_id: str,
     ) -> OrderResponse:
 
         order = await self._orders.get_by_id(
             order_id,
+            buyer_id,
             for_update=True,
         )
 
