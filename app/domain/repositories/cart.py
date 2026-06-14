@@ -43,6 +43,9 @@ class CartRepository(Protocol):
     ) -> None:
         raise NotImplementedError
 
+    async def list_distinct_sku_ids(self) -> list[str]:
+        raise NotImplementedError
+
     async def mark_unavailable_by_sku_ids(
         self,
         sku_ids: list[str],

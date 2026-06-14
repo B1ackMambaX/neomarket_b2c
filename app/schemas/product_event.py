@@ -22,13 +22,16 @@ class ProductData(BaseModel):
     has_stock: bool = False
 
 
+class ProductEventPayload(BaseModel):
+    product_id: str
+    reason: str | None = None
+
+
 class ProductEventRequest(BaseModel):
     idempotency_key: str
-    event: ProductEventType
-    product_id: str
-    sku_ids: list[str] = Field(default_factory=list)
-    reason: str | None = None
-    date: datetime
+    event_type: ProductEventType
+    occurred_at: datetime
+    payload: ProductEventPayload
     product_data: ProductData | None = None
 
 

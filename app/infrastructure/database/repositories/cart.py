@@ -131,6 +131,10 @@ class SQLAlchemyCartRepository:
 
         await self._session.flush()
 
+    async def list_distinct_sku_ids(self) -> list[str]:
+        result = await self._session.scalars(select(CartItemModel.sku_id).distinct())
+        return list(result.all())
+
     async def mark_unavailable_by_sku_ids(
         self,
         sku_ids: list[str],
