@@ -10,12 +10,9 @@ class BannerItem(BaseModel):
     title: str
     image_url: str
     link: str
-    priority: int
-
-
-class BannersResponse(BaseModel):
-    items: list[BannerItem]
-    total_count: int
+    ordering: int
+    active_from: datetime | None = None
+    active_to: datetime | None = None
 
 
 class BannerEventItem(BaseModel):

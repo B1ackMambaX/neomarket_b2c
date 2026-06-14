@@ -5,20 +5,20 @@ from app.api.v1.dependencies.banners import (
     resolve_optional_user_id,
 )
 from app.domain.repositories.banner import BannerRepository
-from app.schemas.banner import BannerEventsRequest, BannersResponse
+from app.schemas.banner import BannerEventsRequest, BannerItem
 from app.services.banner_service import BannerService
 
-router = APIRouter(tags=["Home"])
+router = APIRouter(tags=["Catalog"])
 
 
 @router.get(
-    "/home/banners",
-    response_model=BannersResponse,
+    "/catalog/banners",
+    response_model=list[BannerItem],
     summary="Активные баннеры главной страницы",
 )
-async def list_home_banners(
+async def list_catalog_banners(
     repository: BannerRepository = Depends(get_banner_repository),
-) -> BannersResponse:
+) -> list[BannerItem]:
     service = BannerService(repository)
     return await service.list_active_banners()
 
