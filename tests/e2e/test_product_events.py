@@ -5,12 +5,29 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.api.v1.dependencies.cart import get_cart_repository
-from app.api.v1.dependencies.catalog import get_catalog_snapshot_repository
+from app.api.v1.dependencies.catalog import (
+    get_b2b_catalog_client,
+    get_catalog_snapshot_repository,
+)
 from app.api.v1.dependencies.events import get_product_event_repository
 from app.core.config import settings
 from app.domain.entities.cart import CartIdentity, StoredCartItem
 from app.main import app
 from tests.e2e.test_orders import make_order
+
+PRODUCT_ID = "550e8400-e29b-41d4-a716-446655440000"
+OTHER_PRODUCT_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+class StubB2BSkuClient:
+    def __init__(self, sku_to_product: dict[str, str]) -> None:
+        self.sku_to_product = sku_to_product
+
+    async def get_public_sku(self, sku_id: str) -> dict[str, Any]:
+        return {
+            "id": sku_id,
+            "product_id": self.sku_to_product[sku_id],
+        }
 
 
 class TrackingCartRepository:
@@ -56,6 +73,15 @@ class TrackingCartRepository:
         guest_session_id: str,
     ) -> None:
         raise NotImplementedError
+
+    async def list_distinct_sku_ids(self) -> list[str]:
+        seen: set[str] = set()
+        sku_ids: list[str] = []
+        for item in self.items:
+            if item.sku_id not in seen:
+                seen.add(item.sku_id)
+                sku_ids.append(item.sku_id)
+        return sku_ids
 
     async def mark_unavailable_by_sku_ids(
         self,
@@ -139,20 +165,36 @@ def service_headers() -> dict[str, str]:
 def product_blocked_payload(
     *,
     idempotency_key: str = "d7e8f9a0-b1c2-3456-abcd-789012345678",
-    sku_ids: list[str] | None = None,
+    product_id: str = PRODUCT_ID,
+    reason: str = "Описание не соответствует товару",
 ) -> dict:
     return {
         "idempotency_key": idempotency_key,
-        "event": "PRODUCT_BLOCKED",
-        "product_id": "550e8400-e29b-41d4-a716-446655440000",
-        "sku_ids": sku_ids
-        or [
-            "7c9e6679-7425-40de-944b-e07fc1f90ae7",
-            "8a4e3f9c-1a2b-4c8d-9e5f-6b7a8c9d0e1f",
-        ],
-        "reason": "Описание не соответствует товару",
-        "date": "2026-04-16T12:00:00Z",
+        "event_type": "PRODUCT_BLOCKED",
+        "occurred_at": "2026-04-16T12:00:00Z",
+        "payload": {
+            "product_id": product_id,
+            "reason": reason,
+        },
     }
+
+
+def setup_event_dependencies(
+    *,
+    cart_repository: TrackingCartRepository,
+    product_event_repository: FakeProductEventRepository,
+    sku_to_product: dict[str, str],
+) -> None:
+    app.dependency_overrides[get_cart_repository] = lambda: cart_repository
+    app.dependency_overrides[get_product_event_repository] = (
+        lambda: product_event_repository
+    )
+    app.dependency_overrides[get_catalog_snapshot_repository] = (
+        lambda: FakeCatalogSnapshotRepository()
+    )
+    app.dependency_overrides[get_b2b_catalog_client] = (
+        lambda: StubB2BSkuClient(sku_to_product)
+    )
 
 
 @pytest.mark.asyncio
@@ -167,24 +209,26 @@ async def test_product_blocked_marks_cart_items_unavailable(client: AsyncClient)
             StoredCartItem(id="cart-2", sku_id=sku_ids[1], quantity=1),
             StoredCartItem(
                 id="cart-3",
-                sku_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                sku_id="cccccccc-dddd-eeee-ffff-000000000001",
                 quantity=1,
             ),
         ]
     )
     product_event_repository = FakeProductEventRepository()
-    app.dependency_overrides[get_cart_repository] = lambda: cart_repository
-    app.dependency_overrides[get_product_event_repository] = (
-        lambda: product_event_repository
-    )
-    app.dependency_overrides[get_catalog_snapshot_repository] = (
-        lambda: FakeCatalogSnapshotRepository()
+    setup_event_dependencies(
+        cart_repository=cart_repository,
+        product_event_repository=product_event_repository,
+        sku_to_product={
+            sku_ids[0]: PRODUCT_ID,
+            sku_ids[1]: PRODUCT_ID,
+            "cccccccc-dddd-eeee-ffff-000000000001": OTHER_PRODUCT_ID,
+        },
     )
 
     response = await client.post(
-        "/api/v1/b2b/events",
+        "/api/v1/events/product",
         headers=service_headers(),
-        json=product_blocked_payload(sku_ids=sku_ids),
+        json=product_blocked_payload(),
     )
 
     assert response.status_code == 202
@@ -206,19 +250,16 @@ async def test_orders_not_affected_by_product_blocked(client: AsyncClient):
         [StoredCartItem(id="cart-1", sku_id=sku_id, quantity=1)]
     )
     product_event_repository = FakeProductEventRepository()
-    app.dependency_overrides[get_cart_repository] = lambda: cart_repository
-    app.dependency_overrides[get_product_event_repository] = (
-        lambda: product_event_repository
-    )
-    app.dependency_overrides[get_catalog_snapshot_repository] = (
-        lambda: FakeCatalogSnapshotRepository()
+    setup_event_dependencies(
+        cart_repository=cart_repository,
+        product_event_repository=product_event_repository,
+        sku_to_product={sku_id: PRODUCT_ID},
     )
 
     response = await client.post(
-        "/api/v1/b2b/events",
+        "/api/v1/events/product",
         headers=service_headers(),
         json=product_blocked_payload(
-            sku_ids=[sku_id],
             idempotency_key="e8f9a0b1-c2d3-4567-abcd-890123456789",
         ),
     )
@@ -238,25 +279,20 @@ async def test_idempotent_event_no_side_effects(client: AsyncClient):
         [StoredCartItem(id="cart-1", sku_id=sku_id, quantity=1)]
     )
     product_event_repository = FakeProductEventRepository()
-    app.dependency_overrides[get_cart_repository] = lambda: cart_repository
-    app.dependency_overrides[get_product_event_repository] = (
-        lambda: product_event_repository
+    setup_event_dependencies(
+        cart_repository=cart_repository,
+        product_event_repository=product_event_repository,
+        sku_to_product={sku_id: PRODUCT_ID},
     )
-    app.dependency_overrides[get_catalog_snapshot_repository] = (
-        lambda: FakeCatalogSnapshotRepository()
-    )
-    payload = product_blocked_payload(
-        sku_ids=[sku_id],
-        idempotency_key=idempotency_key,
-    )
+    payload = product_blocked_payload(idempotency_key=idempotency_key)
 
     first = await client.post(
-        "/api/v1/b2b/events",
+        "/api/v1/events/product",
         headers=service_headers(),
         json=payload,
     )
     second = await client.post(
-        "/api/v1/b2b/events",
+        "/api/v1/events/product",
         headers=service_headers(),
         json=payload,
     )
@@ -271,7 +307,7 @@ async def test_idempotent_event_no_side_effects(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_missing_service_key_returns_401(client: AsyncClient):
     response = await client.post(
-        "/api/v1/b2b/events",
+        "/api/v1/events/product",
         json=product_blocked_payload(),
     )
 
@@ -287,31 +323,33 @@ async def test_product_deleted_marks_cart_items_unavailable(client: AsyncClient)
             StoredCartItem(id="cart-1", sku_id=sku_id, quantity=1),
             StoredCartItem(
                 id="cart-2",
-                sku_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                sku_id="cccccccc-dddd-eeee-ffff-000000000001",
                 quantity=2,
             ),
         ]
     )
     product_event_repository = FakeProductEventRepository()
-    app.dependency_overrides[get_cart_repository] = lambda: cart_repository
-    app.dependency_overrides[get_product_event_repository] = (
-        lambda: product_event_repository
-    )
-    app.dependency_overrides[get_catalog_snapshot_repository] = (
-        lambda: FakeCatalogSnapshotRepository()
+    setup_event_dependencies(
+        cart_repository=cart_repository,
+        product_event_repository=product_event_repository,
+        sku_to_product={
+            sku_id: PRODUCT_ID,
+            "cccccccc-dddd-eeee-ffff-000000000001": OTHER_PRODUCT_ID,
+        },
     )
 
     payload = {
         "idempotency_key": "e8f9a0b1-c2d3-4567-abcd-890123456789",
-        "event": "PRODUCT_DELETED",
-        "product_id": "550e8400-e29b-41d4-a716-446655440000",
-        "sku_ids": [sku_id],
-        "reason": None,
-        "date": "2026-04-16T12:00:00Z",
+        "event_type": "PRODUCT_DELETED",
+        "occurred_at": "2026-04-16T12:00:00Z",
+        "payload": {
+            "product_id": PRODUCT_ID,
+            "reason": None,
+        },
     }
 
     response = await client.post(
-        "/api/v1/b2b/events",
+        "/api/v1/events/product",
         headers=service_headers(),
         json=payload,
     )
@@ -331,31 +369,33 @@ async def test_sku_out_of_stock_marks_cart_items_unavailable(client: AsyncClient
             StoredCartItem(id="cart-1", sku_id=sku_id, quantity=3),
             StoredCartItem(
                 id="cart-2",
-                sku_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                sku_id="cccccccc-dddd-eeee-ffff-000000000001",
                 quantity=1,
             ),
         ]
     )
     product_event_repository = FakeProductEventRepository()
-    app.dependency_overrides[get_cart_repository] = lambda: cart_repository
-    app.dependency_overrides[get_product_event_repository] = (
-        lambda: product_event_repository
-    )
-    app.dependency_overrides[get_catalog_snapshot_repository] = (
-        lambda: FakeCatalogSnapshotRepository()
+    setup_event_dependencies(
+        cart_repository=cart_repository,
+        product_event_repository=product_event_repository,
+        sku_to_product={
+            sku_id: PRODUCT_ID,
+            "cccccccc-dddd-eeee-ffff-000000000001": OTHER_PRODUCT_ID,
+        },
     )
 
     payload = {
         "idempotency_key": "f9a0b1c2-d3e4-5678-abcd-901234567890",
-        "event": "SKU_OUT_OF_STOCK",
-        "product_id": "550e8400-e29b-41d4-a716-446655440000",
-        "sku_ids": [sku_id],
-        "reason": None,
-        "date": "2026-04-16T12:30:00Z",
+        "event_type": "SKU_OUT_OF_STOCK",
+        "occurred_at": "2026-04-16T12:30:00Z",
+        "payload": {
+            "product_id": PRODUCT_ID,
+            "reason": None,
+        },
     }
 
     response = await client.post(
-        "/api/v1/b2b/events",
+        "/api/v1/events/product",
         headers=service_headers(),
         json=payload,
     )
