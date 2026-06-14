@@ -219,7 +219,7 @@ class OrderService:
         order_id: str,
     ) -> OrderResponse:
 
-        order = await self._orders.get_by_id(
+        order = await self._orders.get_by_id_for_buyer(
             order_id,
             buyer_id,
             for_update=True,

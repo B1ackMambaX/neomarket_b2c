@@ -792,7 +792,7 @@ async def test_delivered_status_triggers_fulfill_to_b2b():
     )
 
     repo = AsyncMock()
-    repo.get_by_id.return_value = order
+    repo.get_by_id_for_buyer.return_value = order
     repo.save.side_effect = lambda o: o
 
     cart = AsyncMock()
@@ -805,6 +805,7 @@ async def test_delivered_status_triggers_fulfill_to_b2b():
     )
 
     result = await service.mark_delivered(
+        buyer_id=order.buyer_id,
         order_id=order.id,
     )
 
@@ -837,7 +838,7 @@ async def test_fulfill_failure_does_not_break_delivery():
     )
 
     repo = AsyncMock()
-    repo.get_by_id.return_value = order
+    repo.get_by_id_for_buyer.return_value = order
     repo.save.side_effect = lambda o: o
 
     cart = AsyncMock()
@@ -845,7 +846,7 @@ async def test_fulfill_failure_does_not_break_delivery():
 
     request = httpx.Request(
         "POST",
-        "/api/v1/fulfill",
+        "/api/v1/inventory/fulfill",
     )
 
     response = httpx.Response(
@@ -866,6 +867,7 @@ async def test_fulfill_failure_does_not_break_delivery():
     )
 
     result = await service.mark_delivered(
+        buyer_id=order.buyer_id,
         order_id=order.id,
     )
 
