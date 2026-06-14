@@ -94,16 +94,16 @@ async def test_active_banners_returned_sorted_by_priority(client: AsyncClient):
     )
     app.dependency_overrides[get_banner_repository] = lambda: repository
 
-    response = await client.get("/api/v1/home/banners")
+    response = await client.get("/api/v1/catalog/banners")
 
     assert response.status_code == 200
     body = response.json()
-    assert body["total_count"] == 2
-    assert [item["id"] for item in body["items"]] == [first_id, second_id]
-    assert [item["priority"] for item in body["items"]] == [5, 20]
-    assert body["items"][0]["title"] == "Высокий приоритет"
-    assert body["items"][1]["title"] == "Низкий приоритет"
-    assert third_id not in {item["id"] for item in body["items"]}
+    assert len(body) == 2
+    assert [item["id"] for item in body] == [first_id, second_id]
+    assert [item["ordering"] for item in body] == [5, 20]
+    assert body[0]["title"] == "Высокий приоритет"
+    assert body[1]["title"] == "Низкий приоритет"
+    assert third_id not in {item["id"] for item in body}
 
 
 @pytest.mark.asyncio
@@ -128,10 +128,10 @@ async def test_no_active_banners_returns_200_empty(client: AsyncClient):
     )
     app.dependency_overrides[get_banner_repository] = lambda: repository
 
-    response = await client.get("/api/v1/home/banners")
+    response = await client.get("/api/v1/catalog/banners")
 
     assert response.status_code == 200
-    assert response.json() == {"items": [], "total_count": 0}
+    assert response.json() == []
 
 
 @pytest.mark.asyncio

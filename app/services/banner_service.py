@@ -2,26 +2,27 @@ from datetime import UTC, datetime
 
 from app.domain.exceptions import BannerNotFoundException, EmptyEventsException
 from app.domain.repositories.banner import BannerEventRecord, BannerRepository
-from app.schemas.banner import BannerEventsRequest, BannerItem, BannersResponse
+from app.schemas.banner import BannerEventsRequest, BannerItem
 
 
 class BannerService:
     def __init__(self, repository: BannerRepository) -> None:
         self._repository = repository
 
-    async def list_active_banners(self) -> BannersResponse:
+    async def list_active_banners(self) -> list[BannerItem]:
         banners = await self._repository.list_active(as_of=datetime.now(UTC))
-        items = [
+        return [
             BannerItem(
                 id=banner.id,
                 title=banner.title,
                 image_url=banner.image_url,
                 link=banner.link,
-                priority=banner.priority,
+                ordering=banner.priority,
+                active_from=banner.start_at,
+                active_to=banner.end_at,
             )
             for banner in banners
         ]
-        return BannersResponse(items=items, total_count=len(items))
 
     async def record_events(
         self,
