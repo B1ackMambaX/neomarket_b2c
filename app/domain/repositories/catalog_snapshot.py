@@ -17,6 +17,8 @@ class CatalogSnapshotRepository(Protocol):
 
     async def set_stock(self, *, product_id: str, has_stock: bool) -> None: ...
 
+    async def set_min_price(self, *, product_id: str, min_price: int) -> None: ...
+
     async def get_facets(
         self,
         *,

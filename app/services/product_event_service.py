@@ -8,12 +8,15 @@ from app.schemas.product_event import ProductEventRequest, ProductEventResponse
 
 _EVENT_TO_UNAVAILABLE_REASON = {
     "PRODUCT_BLOCKED": "PRODUCT_BLOCKED",
+    "PRODUCT_HARD_BLOCKED": "PRODUCT_BLOCKED",
     "PRODUCT_DELETED": "PRODUCT_DELETED",
-    "SKU_OUT_OF_STOCK": "OUT_OF_STOCK",
 }
 
-_SNAPSHOT_DEACTIVATE_EVENTS = {"PRODUCT_BLOCKED", "PRODUCT_DELETED"}
-_SNAPSHOT_UPSERT_EVENTS = {"PRODUCT_CREATED", "PRODUCT_UPDATED"}
+_SNAPSHOT_DEACTIVATE_EVENTS = {
+    "PRODUCT_BLOCKED",
+    "PRODUCT_HARD_BLOCKED",
+    "PRODUCT_DELETED",
+}
 
 
 class ProductEventService:
@@ -50,17 +53,13 @@ class ProductEventService:
                     sku_ids=sku_ids,
                     unavailable_reason=unavailable_reason,
                 )
-
-        if request.event_type in _SNAPSHOT_UPSERT_EVENTS and request.product_data:
-            await self._catalog_snapshot_repository.upsert(
-                product_id=product_id,
-                category_id=request.product_data.category_id,
-                title=request.product_data.title,
-                characteristics=request.product_data.characteristics,
-                min_price=request.product_data.min_price,
-                has_stock=request.product_data.has_stock,
+        elif request.event_type == "SKU_OUT_OF_STOCK" and request.payload.sku_id:
+            await self._cart_repository.mark_unavailable_by_sku_ids(
+                sku_ids=[request.payload.sku_id],
+                unavailable_reason="OUT_OF_STOCK",
             )
-        elif request.event_type in _SNAPSHOT_DEACTIVATE_EVENTS:
+
+        if request.event_type in _SNAPSHOT_DEACTIVATE_EVENTS:
             await self._catalog_snapshot_repository.deactivate(product_id)
         elif request.event_type == "SKU_OUT_OF_STOCK":
             await self._catalog_snapshot_repository.set_stock(
@@ -70,8 +69,38 @@ class ProductEventService:
             await self._catalog_snapshot_repository.set_stock(
                 product_id=product_id, has_stock=True
             )
+        elif request.event_type == "PRICE_CHANGED":
+            await self._refresh_catalog_snapshot(
+                product_id=product_id,
+                fallback_min_price=request.payload.new_price,
+            )
 
         return ProductEventResponse(accepted=True)
+
+    async def _refresh_catalog_snapshot(
+        self,
+        *,
+        product_id: str,
+        fallback_min_price: int | None,
+    ) -> None:
+        try:
+            product = await self._b2b_client.get_public_product(product_id)
+        except Exception:
+            if fallback_min_price is not None:
+                await self._catalog_snapshot_repository.set_min_price(
+                    product_id=product_id,
+                    min_price=fallback_min_price,
+                )
+            return
+
+        await self._catalog_snapshot_repository.upsert(
+            product_id=product_id,
+            category_id=self._category_id(product),
+            title=product.get("title") or product.get("name") or product_id,
+            characteristics=product.get("characteristics") or [],
+            min_price=self._min_price(product, fallback_min_price),
+            has_stock=self._has_stock(product),
+        )
 
     async def _cart_sku_ids_for_product(self, product_id: str) -> list[str]:
         cart_sku_ids = await self._cart_repository.list_distinct_sku_ids()
@@ -89,3 +118,40 @@ class ProductEventService:
 
         results = await asyncio.gather(*[_match(sku_id) for sku_id in cart_sku_ids])
         return [sku_id for sku_id in results if sku_id is not None]
+
+    def _category_id(self, product: dict[str, Any]) -> str | None:
+        category = product.get("category") or {}
+        return product.get("category_id") or category.get("id")
+
+    def _min_price(
+        self,
+        product: dict[str, Any],
+        fallback_min_price: int | None,
+    ) -> int:
+        min_price = product.get("min_price")
+        if min_price is not None:
+            return int(min_price)
+        price = product.get("price")
+        if price is not None:
+            return int(price)
+
+        sku_prices = [
+            max(int(sku.get("price") or 0) - int(sku.get("discount") or 0), 0)
+            for sku in product.get("skus", [])
+            if int(sku.get("active_quantity") or 0) > 0
+        ]
+        if sku_prices:
+            return min(sku_prices)
+        return fallback_min_price or 0
+
+    def _has_stock(self, product: dict[str, Any]) -> bool:
+        has_stock = product.get("has_stock")
+        if has_stock is not None:
+            return bool(has_stock)
+        in_stock = product.get("in_stock")
+        if in_stock is not None:
+            return bool(in_stock)
+        return any(
+            int(sku.get("active_quantity") or 0) > 0
+            for sku in product.get("skus", [])
+        )

@@ -16,7 +16,7 @@ from app.domain.repositories.product_event import ProductEventRepository
 from app.schemas.product_event import ProductEventRequest, ProductEventResponse
 from app.services.product_event_service import ProductEventService
 
-router = APIRouter(prefix="/events/product", tags=["Product Events"])
+router = APIRouter(prefix="/b2b/events", tags=["B2B Events"])
 
 
 @router.post(

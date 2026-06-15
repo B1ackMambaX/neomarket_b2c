@@ -69,6 +69,15 @@ class SQLAlchemyCatalogSnapshotRepository:
         await self._session.execute(stmt)
         await self._session.flush()
 
+    async def set_min_price(self, *, product_id: str, min_price: int) -> None:
+        stmt = (
+            update(CatalogSnapshotModel)
+            .where(CatalogSnapshotModel.product_id == product_id)
+            .values(min_price=min_price, updated_at=datetime.now(timezone.utc))
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()
+
     async def get_facets(
         self,
         *,
